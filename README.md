@@ -99,10 +99,12 @@ Then you would get a `policy.onnx` file to run on C++ code.
 ### Acknowledgement ###
 We would appreciate it if you would cite it in academic publications:
 ```
-@article{lee2024integrating,
-  title={Integrating Model-Based Footstep Planning with Model-Free Reinforcement Learning for Dynamic Legged Locomotion},
+@inproceedings{lee2024integrating,
+  title={Integrating model-based footstep planning with model-free reinforcement learning for dynamic legged locomotion},
   author={Lee, Ho Jae and Hong, Seungwoo and Kim, Sangbae},
-  journal={arXiv preprint arXiv:2408.02662},
-  year={2024}
+  booktitle={2024 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
+  pages={11248--11255},
+  year={2024},
+  organization={IEEE}
 }
 ```
