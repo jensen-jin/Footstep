@@ -92,6 +92,11 @@ To deploy the trained policy, you would need to set `EXPORT_POLICY=TRUE` in the 
 Then you would get a `policy.onnx` file to run on C++ code.
 
 ---
+### System Info ###
+Operating System: Ubuntu 22.04 <br/>
+GPU: Geforce 3090
+
+---
 ### Troubleshooting ###
 1. If you get the following error: `ImportError: libpython3.8m.so.1.0: cannot open shared object file: No such file or directory`, do: `export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:\$LD_LIBRARY_PATH`
 
