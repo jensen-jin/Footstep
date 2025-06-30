@@ -158,9 +158,16 @@ class LeggedRobotCfg(BaseConfig):
         
         # New force-based pushing system
         use_force_push = False  # Set to True to enable force-based pushing
-        max_push_force_xy = 100.0  # Maximum push force in Newtons
+        max_push_force_xy = 100.0  # Maximum push force in Newtons (for combined mode)
         push_duration = 10  # Duration of push in simulation steps
         push_debug = False  # Enable debug output for push forces
+        
+        # Independent X/Y force control
+        separate_xy_forces = False  # Enable separate X and Y force control
+        max_push_force_x = 100.0  # Maximum push force in X direction (Newtons)
+        max_push_force_y = 100.0  # Maximum push force in Y direction (Newtons)
+        push_force_x_range = [-1.0, 1.0]  # X force multiplier range
+        push_force_y_range = [-1.0, 1.0]  # Y force multiplier range
 
     class rewards:
         class weights:

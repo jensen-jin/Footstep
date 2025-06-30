@@ -478,6 +478,38 @@ class LeggedRobot(BaseTask):
         else:
             return max_force
     
+    def _compute_push_force_x(self):
+        """Return curriculum-based push force magnitude for X direction."""
+        step = self.common_step_counter
+        # Get max force from config, with fallback
+        max_force = getattr(self.cfg.domain_rand, 'max_push_force_x', 100.0)
+        
+        # Curriculum learning for push force
+        if step < 10_000:
+            return max_force * 0.25 
+        elif step < 30_000:
+            return max_force * 0.50
+        elif step < 60_000:
+            return max_force * 0.75
+        else:
+            return max_force
+    
+    def _compute_push_force_y(self):
+        """Return curriculum-based push force magnitude for Y direction."""
+        step = self.common_step_counter
+        # Get max force from config, with fallback
+        max_force = getattr(self.cfg.domain_rand, 'max_push_force_y', 100.0)
+        
+        # Curriculum learning for push force
+        if step < 10_000:
+            return max_force * 0.25 
+        elif step < 30_000:
+            return max_force * 0.50
+        elif step < 60_000:
+            return max_force * 0.75
+        else:
+            return max_force
+    
     def _maybe_push_robot(self):
         """Apply curriculum-based continuous push forces to robots."""
         # Check if force-based pushing is enabled
@@ -490,14 +522,32 @@ class LeggedRobot(BaseTask):
             self.push_step_count = 0
             self.last_push_step = self.common_step_counter
 
-            # Random push direction (unit vector) × push magnitude
-            force_magnitude = self._compute_push_force()
-            random_dir = 2 * torch.rand((self.num_envs, 2), device=self.device) - 1
-            random_dir = torch.nn.functional.normalize(random_dir, dim=1) * force_magnitude
-
-            # Save current cycle push force
+            # Generate push forces based on configuration mode
             self.current_push_force = torch.zeros((self.num_envs, 3), device=self.device)
-            self.current_push_force[:, :2] = random_dir
+            
+            if getattr(self.cfg.domain_rand, 'separate_xy_forces', False):
+                # Independent X and Y force control
+                force_x = self._compute_push_force_x()
+                force_y = self._compute_push_force_y()
+                
+                # Generate random force multipliers within specified ranges
+                x_range = getattr(self.cfg.domain_rand, 'push_force_x_range', [-1.0, 1.0])
+                y_range = getattr(self.cfg.domain_rand, 'push_force_y_range', [-1.0, 1.0])
+                
+                x_multiplier = torch.rand((self.num_envs,), device=self.device) * (x_range[1] - x_range[0]) + x_range[0]
+                y_multiplier = torch.rand((self.num_envs,), device=self.device) * (y_range[1] - y_range[0]) + y_range[0]
+                
+                self.current_push_force[:, 0] = force_x * x_multiplier
+                self.current_push_force[:, 1] = force_y * y_multiplier
+                
+                if getattr(self.cfg.domain_rand, 'push_debug', False):
+                    print(f"Separate XY forces - X: {force_x:.1f}N (mult: {x_multiplier[0]:.2f}), Y: {force_y:.1f}N (mult: {y_multiplier[0]:.2f})")
+            else:
+                # Original combined force mode (unit vector × magnitude)
+                force_magnitude = self._compute_push_force()
+                random_dir = 2 * torch.rand((self.num_envs, 2), device=self.device) - 1
+                random_dir = torch.nn.functional.normalize(random_dir, dim=1) * force_magnitude
+                self.current_push_force[:, :2] = random_dir
 
         # If in push cycle, apply current saved push force
         if getattr(self, "push_active", False):

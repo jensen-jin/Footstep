@@ -202,6 +202,25 @@ config.domain_rand.push_interval = 100  # 推动间隔
 - **课程学习**：推力强度随训练步数逐渐增加
 - **可配置推动点**：可推动机器人的特定部位
 - **真实物理**：比基于速度的推动更符合物理规律
+- **横纵方向独立控制**：可分别设置X和Y方向的推力强度和范围
+
+#### 横纵方向独立推力控制
+支持独立设置X和Y方向的推力参数：
+
+```python
+# 启用横纵方向独立控制
+config.domain_rand.separate_xy_forces = True
+config.domain_rand.max_push_force_x = 120.0  # X方向最大推力
+config.domain_rand.max_push_force_y = 60.0   # Y方向最大推力
+config.domain_rand.push_force_x_range = [-0.8, 1.2]  # X方向力量范围
+config.domain_rand.push_force_y_range = [-1.0, 1.0]  # Y方向力量范围
+```
+
+**应用场景：**
+- **前后运动训练**：重点训练前进/后退稳定性
+- **侧向稳定性**：加强左右平衡能力
+- **非对称扰动**：模拟真实环境中的方向性干扰
+- **特定方向训练**：针对特定行走方向的鲁棒性训练
 
 ### DWAQ神经网络架构
 集成了高级的DWAQ（Deep With Autoencoder Quantization）架构：
