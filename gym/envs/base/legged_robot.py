@@ -310,8 +310,15 @@ class LeggedRobot(BaseTask):
 
         if self.cfg.terrain.measure_heights:
             self.measured_heights = self._get_heights()
-        if self.cfg.domain_rand.push_robots and (self.common_step_counter % self.cfg.domain_rand.push_interval == 0):
-            self._push_robots()
+        
+        # Handle robot pushing - choose between legacy velocity push or new force push
+        if self.cfg.domain_rand.push_robots:
+            if getattr(self.cfg.domain_rand, 'use_force_push', False):
+                # Use new force-based continuous pushing
+                self._maybe_push_robot()
+            elif (self.common_step_counter % self.cfg.domain_rand.push_interval == 0):
+                # Use legacy velocity-based pushing
+                self._push_robots()
 
 
     def _resample_commands(self, env_ids):
@@ -449,11 +456,79 @@ class LeggedRobot(BaseTask):
 
 
     def _push_robots(self):
-        """ Random pushes the robots. Emulates an impulse by setting a randomized base velocity. 
+        """ Legacy push method using velocity. Kept for compatibility. 
         """
         max_vel = self.cfg.domain_rand.max_push_vel_xy
         self.root_states[:, 7:9] = torch_rand_float(-max_vel, max_vel, (self.num_envs, 2), device=self.device) # lin vel x/y
         self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
+    
+    def _compute_push_force(self):
+        """Return curriculum-based push force magnitude."""
+        step = self.common_step_counter
+        # Get max force from config, with fallback
+        max_force = getattr(self.cfg.domain_rand, 'max_push_force_xy', 100.0)
+        
+        # Curriculum learning for push force
+        if step < 10_000:
+            return max_force * 0.25 
+        elif step < 30_000:
+            return max_force * 0.50
+        elif step < 60_000:
+            return max_force * 0.75
+        else:
+            return max_force
+    
+    def _maybe_push_robot(self):
+        """Apply curriculum-based continuous push forces to robots."""
+        # Check if force-based pushing is enabled
+        if not getattr(self.cfg.domain_rand, 'use_force_push', False):
+            return
+            
+        # Check if we need to start a new push cycle
+        if self.common_step_counter % self.cfg.domain_rand.push_interval == 0:
+            self.push_active = True
+            self.push_step_count = 0
+            self.last_push_step = self.common_step_counter
+
+            # Random push direction (unit vector) × push magnitude
+            force_magnitude = self._compute_push_force()
+            random_dir = 2 * torch.rand((self.num_envs, 2), device=self.device) - 1
+            random_dir = torch.nn.functional.normalize(random_dir, dim=1) * force_magnitude
+
+            # Save current cycle push force
+            self.current_push_force = torch.zeros((self.num_envs, 3), device=self.device)
+            self.current_push_force[:, :2] = random_dir
+
+        # If in push cycle, apply current saved push force
+        if getattr(self, "push_active", False):
+            self._push_robot_base_continuous()
+            self.push_step_count += 1
+            if getattr(self.cfg.domain_rand, 'push_debug', False):
+                print(f"Push step {self.push_step_count} at step {self.common_step_counter}, force: {self.current_push_force[0]}")
+            if self.push_step_count >= self.push_duration:
+                self.push_active = False
+    
+    def _push_robot_base_continuous(self):
+        """Apply continuous external forces to robot base using Isaac Gym force interface."""
+        if "base_link" not in self.rigid_body_idx:
+            print("Warning: base_link not found in rigid_body_idx, skipping force application")
+            return
+            
+        base_index = self.rigid_body_idx["base_link"]
+        # Get base positions for force application
+        force_positions = self._rigid_body_pos[:, 0:3].contiguous()  # shape: (num_envs * num_bodies, 3)
+        forces = torch.zeros((self.num_envs, self.num_bodies, 3), device=self.device)
+        
+        # Apply current push force to base_link
+        forces[:, base_index, :] = self.current_push_force
+        
+        # Apply forces using Isaac Gym API
+        self.gym.apply_rigid_body_force_at_pos_tensors(
+            self.sim,
+            gymtorch.unwrap_tensor(forces.contiguous()),
+            gymtorch.unwrap_tensor(force_positions),
+            gymapi.ENV_SPACE
+        )
 
 
     def _update_terrain_curriculum(self, env_ids):
@@ -557,6 +632,13 @@ class LeggedRobot(BaseTask):
 
         # initialize some data used later on
         self.common_step_counter = 0
+        
+        # Initialize push force system state variables
+        self.push_active = False
+        self.push_step_count = 0
+        self.push_duration = getattr(self.cfg.domain_rand, 'push_duration', 10)  # Default 10 steps
+        self.current_push_force = torch.zeros((self.num_envs, 3), device=self.device)
+        self.last_push_step = 0
         self.extras = {}
         self.gravity_vec = to_torch(get_axis_params(-1., self.up_axis_idx),
                                 device=self.device).repeat((self.num_envs, 1))

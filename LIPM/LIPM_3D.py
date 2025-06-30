@@ -103,7 +103,7 @@ class LIPM3D:
         original_offset_x = -b_x
         original_offset_y = -b_y if self.support_leg == "left_leg" else b_y 
         offset_x = np.cos(theta) * original_offset_x - np.sin(theta) * original_offset_y
-        offset_y = np.sin(theta) * original_offset_x - np.cos(theta) * original_offset_y
+        offset_y = np.sin(theta) * original_offset_x + np.cos(theta) * original_offset_y  # 修正符号错误
 
         self.u_x = self.eICP_x + offset_x
         self.u_y = self.eICP_y + offset_y

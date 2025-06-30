@@ -155,6 +155,12 @@ class LeggedRobotCfg(BaseConfig):
         push_robots = False
         push_interval_s = 15
         max_push_vel_xy = 1.
+        
+        # New force-based pushing system
+        use_force_push = False  # Set to True to enable force-based pushing
+        max_push_force_xy = 100.0  # Maximum push force in Newtons
+        push_duration = 10  # Duration of push in simulation steps
+        push_debug = False  # Enable debug output for push forces
 
     class rewards:
         class weights:
