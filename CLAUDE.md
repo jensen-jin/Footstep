@@ -1,0 +1,218 @@
+# CLAUDE.md
+
+本文件为Claude Code (claude.ai/code)在此代码库中工作时提供指导。
+
+## 项目概述
+
+这是一个人形机器人研究代码库，实现了"基于模型的足迹规划与无模型强化学习集成的动态腿式运动"（IROS 2024）。该项目结合Isaac Gym仿真和基于PyTorch的强化学习，用于训练具有先进引导模型的人形机器人。
+
+## 开发命令
+
+### 安装和设置
+```bash
+# 安装Python依赖
+pip install -r requirements.txt
+
+# 安装Isaac Gym（需单独下载）
+# 从NVIDIA Developer下载Isaac Gym Preview 4
+cd <isaacgym_location>/python
+pip install -e .
+
+# 安装此包
+pip install -e .
+```
+
+### 训练命令
+```bash
+# 使用默认设置训练人形机器人控制器
+python gym/scripts/train.py --task=humanoid_controller
+
+# 使用特定参数训练
+python gym/scripts/train.py --task=humanoid_controller --num_envs=4096 --headless
+
+# 从检查点恢复训练
+python gym/scripts/train.py --task=humanoid_controller --resume --load_run=-1 --checkpoint=-1
+
+# 使用CPU仿真运行（较慢）
+python gym/scripts/train.py --task=humanoid_controller --sim_device=cpu --rl_device=cpu
+```
+
+### 播放/测试训练模型
+```bash
+# 播放训练策略（默认加载最新）
+python gym/scripts/play.py --task=humanoid_controller
+
+# 播放特定检查点
+python gym/scripts/play.py --task=humanoid_controller --load_run=<run_name> --checkpoint=<iteration>
+
+# 导出策略用于硬件部署
+# 在play.py中设置EXPORT_POLICY=TRUE生成policy.onnx
+```
+
+### 机器人注册系统（统一接口）
+```bash
+# 列出可用机器人
+python -m gym.envs.robots.unified_trainer list
+
+# 获取机器人信息
+python -m gym.envs.robots.unified_trainer info mit_humanoid_fixed_arms
+
+# 使用特定机器人+引导模型训练
+python -m gym.envs.robots.unified_trainer train \
+    --robot mit_humanoid_fixed_arms \
+    --guidance ipc3d \
+    --experiment my_experiment
+
+# 运行对比研究
+python -m gym.envs.robots.unified_trainer compare \
+    --robots mit_humanoid_fixed_arms mit_humanoid_full \
+    --guidance limp ipc3d \
+    --name guidance_comparison
+```
+
+### LIPM演示
+```bash
+# 运行3D LIPM动画
+python LIPM/demo_LIPM_3D_vt.py
+
+# 运行LIPM分析和绘图
+python LIPM/demo_LIMP_3D_vt_analysis.py
+```
+
+### 测试
+```bash
+# 运行环境测试
+python gym/tests/test_env.py
+
+# 测试机器人注册系统
+python test_robot_registry.py
+
+# 测试IPC3D实现
+python test_ipc3d_implementation.py
+
+# 运行pytest
+pytest
+```
+
+## 架构概述
+
+### 核心结构
+- **gym/**: 主要Isaac Gym环境和训练基础架构
+  - **envs/**: 任务环境（人形机器人、倒立摆小车、单摆）
+    - **base/**: 所有机器人和任务的基类
+    - **humanoid/**: 人形机器人特定控制器和配置
+    - **robots/**: 统一机器人注册系统（13个机器人模型）
+    - **guidance/**: 引导模型（LIPM、IPC3D）
+  - **scripts/**: 训练和评估脚本
+  - **utils/**: 日志记录、接口、地形生成工具
+
+- **learning/**: 基于PyTorch的强化学习算法
+  - **algorithms/**: PPO实现
+  - **modules/**: 演员-评论家网络
+  - **runners/**: 训练循环管理
+  - **storage/**: 经验回放缓冲区
+
+- **LIPM/**: 线性倒立摆模型演示
+- **resources/**: 机器人URDF文件、轨迹和3D网格
+
+### 机器人注册系统
+项目具有统一的机器人管理系统：
+
+```python
+from gym.envs.robots import RobotConfigFactory, RobotRegistry
+
+# 为任何机器人+引导组合创建配置
+config = RobotConfigFactory.create_config(
+    robot_name='mit_humanoid_fixed_arms',
+    guidance_model='ipc3d'
+)
+
+# 列出所有可用机器人
+robots = RobotRegistry.list_robots()  # 13种不同的机器人模型
+```
+
+可用机器人包括：
+- **mit_humanoid_fixed_arms**: 主要步行人形机器人（10自由度）
+- **mit_humanoid_full**: 带手臂的完整人形机器人（16自由度）
+- **cartpole**: 经典控制基准
+- **pendulum**: 用于测试的简单单摆
+- 另外9种机器人变体
+
+### 引导模型
+实现了两个主要引导模型：
+
+1. **LIMP（线性倒立摆模型）**:
+   - 快速、传统的足迹规划
+   - 适合平地行走
+
+2. **IPC3D（3D倒立摆控制）**:
+   - 基于SDRE的先进非线性控制
+   - 更适合复杂地形和动态平衡
+   - 基于FlexLoco实现的双轴控制
+
+```python
+from gym.envs.guidance import GuidanceModelFactory
+
+# 创建引导模型
+guidance = GuidanceModelFactory.create_model(
+    model_type='ipc3d',
+    robot_spec=robot_spec,
+    guidance_config=config
+)
+```
+
+## 关键配置文件
+
+- **configs/robot_training_config.yaml**: 批量实验配置
+- **gym/envs/humanoid/humanoid_controller_config.py**: 人形机器人特定设置
+- **gym/envs/robots/specifications/**: 机器人模型定义
+- **requirements.txt**: Python依赖
+
+## 开发说明
+
+### 模型训练
+- 目标约3000次迭代以获得良好的人形机器人策略
+- 训练期间按'v'键禁用渲染以提高性能
+- 模型保存到`gym/logs/<experiment_name>/<date_time>_<run_name>/model_<iteration>.pt`
+- 使用`--headless`进行无可视化的快速训练
+
+### Isaac Gym集成
+- 基于Isaac Gym Preview 4构建（兼容Preview 3）
+- GPU加速物理仿真，支持数千个并行环境
+- 需要支持CUDA的NVIDIA GPU
+- 默认设置使用4096个并行环境
+
+### 硬件部署
+- 训练策略可导出为ONNX格式用于C++部署
+- 兼容MIT的Cheetah-Software硬件栈
+- 在play.py中设置`EXPORT_POLICY=TRUE`进行策略导出
+
+### IPC3D实现细节
+- FlexLoco的Lua IPC3D算法的完整Python移植
+- SDRE（状态相关Riccati方程）非线性控制
+- 分离X和Z动力学的双轴控制
+- 实时轨迹生成和跟踪
+- 与机器人注册表集成，便于实验
+
+## 常见故障排除
+
+### Isaac Gym问题
+```bash
+# 缺少libpython错误
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
+
+# CUDA/GPU问题
+python gym/scripts/train.py --task=humanoid_controller --sim_device=cpu
+```
+
+### 内存问题
+- 对于复杂机器人或有限GPU内存，减少`num_envs`
+- 使用`mit_humanoid_fixed_arms`（10自由度）而不是`mit_humanoid_full`（16自由度）
+- 训练期间监控GPU内存使用
+
+### 性能优化
+- 训练时使用`--headless`模式
+- 训练期间用'v'键禁用渲染
+- 根据硬件调整回合长度和环境数量
+
+该代码库支持传统的LIMP引导和新的IPC3D引导模型，提供统一接口用于训练任何机器人与任何引导模型的组合。

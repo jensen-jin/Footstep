@@ -1,0 +1,82 @@
+# Robot Training Configuration
+# This file demonstrates how to configure robot training experiments
+# with different robots and guidance models
+
+# Global training settings
+training:
+  max_iterations: 5000
+  save_interval: 100
+  num_envs: 4096
+  episode_length_s: 10
+
+# Default robot configuration overrides
+default_overrides:
+  env:
+    num_envs: 4096
+    episode_length_s: 10
+  
+  terrain:
+    mesh_type: "plane"
+    curriculum: false
+  
+  rewards:
+    weights:
+      base_height: 2.0
+      tracking_lin_vel_world: 4.0
+
+# Experiment definitions
+experiments:
+  # Baseline experiment with LIPM guidance
+  - robot: "mit_humanoid_fixed_arms"
+    guidance: "limp"
+    name: "baseline_limp"
+    overrides:
+      terrain:
+        mesh_type: "plane"
+      runner:
+        max_iterations: 3000
+
+  # Improved experiment with IPC3D guidance  
+  - robot: "mit_humanoid_fixed_arms"
+    guidance: "ipc3d"
+    name: "improved_ipc3d"
+    overrides:
+      terrain:
+        mesh_type: "heightfield"
+      runner:
+        max_iterations: 5000
+
+  # Full body robot with IPC3D
+  - robot: "mit_humanoid_full"
+    guidance: "ipc3d"
+    name: "full_body_ipc3d"
+    overrides:
+      env:
+        num_envs: 2048  # Reduce for more complex robot
+      runner:
+        max_iterations: 4000
+
+  # Simple robot for testing
+  - robot: "cartpole"
+    guidance: "ipc3d"
+    name: "cartpole_test"
+    overrides:
+      env:
+        num_envs: 1024
+        episode_length_s: 5
+      runner:
+        max_iterations: 1000
+
+# Comparison study configurations
+comparison_studies:
+  # Compare guidance models on same robot
+  guidance_comparison:
+    robots: ["mit_humanoid_fixed_arms"]
+    guidance_models: ["limp", "ipc3d"]
+    base_name: "guidance_comparison"
+  
+  # Compare robots with same guidance
+  robot_comparison:
+    robots: ["mit_humanoid_fixed_arms", "mit_humanoid_full"]
+    guidance_models: ["ipc3d"]
+    base_name: "robot_comparison"
