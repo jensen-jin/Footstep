@@ -98,7 +98,7 @@ class IPC3DGuidanceModel(BaseGuidanceModel):
         if 'step_time' in target:
             self.step_time = target['step_time']
             
-        print(f"IPC3D target set: vx={target_vel_x:.2f}, vz={target_vel_z:.2f} m/s")
+        # print(f"IPC3D target set: vx={target_vel_x:.2f}, vz={target_vel_z:.2f} m/s")
         
     def update(self, robot_state: Dict[str, Any], dt: Optional[float] = None) -> Dict[str, Any]:
         """Update guidance model and compute control outputs."""

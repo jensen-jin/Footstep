@@ -163,6 +163,7 @@ class OnPolicyRunner:
             self.tot_time += self.iteration_time
 
             self.log_wandb(locals())
+            self.log_tensorboard(locals(), it)
             if (it % self.save_interval == 0) and self.logging_cfg['enable_local_saving']:
                 self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(it)))
             ep_infos.clear()
@@ -283,6 +284,67 @@ class OnPolicyRunner:
                        f"""{'ETA:':>{pad}} {self.tot_time / (locs['it'] + 1) * (
                                locs['num_learning_iterations'] - locs['it']):.1f}s\n""")
         print(log_string)
+
+    def log_tensorboard(self, locs, iteration):
+        """Log training metrics to TensorBoard."""
+        if not hasattr(self, 'tensorboard_writer') or self.tensorboard_writer is None:
+            return
+
+        # Log episode information
+        for key in locs['ep_infos'][0]:
+            infotensor = torch.tensor([], device=self.device)
+            for ep_info in locs['ep_infos']:
+                if len(ep_info[key].shape) == 0:
+                    ep_info[key] = ep_info[key].unsqueeze(0)
+                infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
+            value = torch.mean(infotensor)
+            self.tensorboard_writer.add_scalar(f"Episode/{key}", value, iteration)
+
+        # Log performance metrics
+        mean_std = self.alg.actor_critic.std.mean()
+        fps = int(self.num_steps_per_env * self.env.num_envs / (locs['collection_time'] + locs['learn_time']))
+
+        # Log losses and policy metrics
+        self.tensorboard_writer.add_scalar("Loss/value_function", locs['mean_value_loss'], iteration)
+        self.tensorboard_writer.add_scalar("Loss/surrogate", locs['mean_surrogate_loss'], iteration)
+        self.tensorboard_writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, iteration)
+        self.tensorboard_writer.add_scalar("Policy/mean_noise_std", mean_std.item(), iteration)
+        self.tensorboard_writer.add_scalar("Perf/total_fps", fps, iteration)
+        self.tensorboard_writer.add_scalar("Perf/collection_time", locs['collection_time'], iteration)
+        self.tensorboard_writer.add_scalar("Perf/learning_time", locs['learn_time'], iteration)
+
+        # Log training metrics
+        if len(locs['rewbuffer']) > 0:
+            self.tensorboard_writer.add_scalar("Train/mean_reward", statistics.mean(locs['rewbuffer']), iteration)
+            self.tensorboard_writer.add_scalar("Train/mean_episode_length", statistics.mean(locs['lenbuffer']), iteration)
+
+        # Log HI-12 IPC3D specific metrics if available
+        if hasattr(self.env, 'trajectory_tracking_error'):
+            try:
+                tracking_error = torch.mean(self.env.trajectory_tracking_error)
+                self.tensorboard_writer.add_scalar("IPC3D/trajectory_tracking_error", tracking_error, iteration)
+            except:
+                pass
+                
+        if hasattr(self.env, 'guidance_consistency_score'):
+            try:
+                consistency_score = torch.mean(self.env.guidance_consistency_score)
+                self.tensorboard_writer.add_scalar("IPC3D/guidance_consistency_score", consistency_score, iteration)
+            except:
+                pass
+
+        if hasattr(self.env, 'push_active'):
+            try:
+                if isinstance(self.env.push_active, torch.Tensor):
+                    push_active_ratio = torch.mean(self.env.push_active.float())
+                else:
+                    push_active_ratio = 1.0 if self.env.push_active else 0.0
+                self.tensorboard_writer.add_scalar("Disturbance/push_active_ratio", push_active_ratio, iteration)
+            except:
+                pass
+
+        # Flush TensorBoard data
+        self.tensorboard_writer.flush()
 
     def save(self, path, infos=None):
         torch.save({

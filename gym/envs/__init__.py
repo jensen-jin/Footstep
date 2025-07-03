@@ -28,6 +28,7 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
+# 在其他代码中使用时，请确保导入以下模块和类 from gym.envs import * 会直接导致执行该文件
 from gym import LEGGED_GYM_ROOT_DIR, LEGGED_GYM_ENVS_DIR
 from .base.legged_robot import LeggedRobot
 
@@ -42,6 +43,11 @@ from .humanoid.humanoid_vanilla_config import HumanoidVanillaCfg, HumanoidVanill
 from .humanoid.humanoid_controller import HumanoidController
 from .humanoid.humanoid_controller_config import HumanoidControllerCfg, HumanoidControllerRunnerCfg
 
+# Import HI-12 environments
+from .hi_12.hi_controller import HiController
+from .hi_12.hi_controller_config import HiControllerCfg, HiControllerRunnerCfg
+from .hi_12.hi_controller_ipc3d import HiControllerIPC3D, HiControllerIPC3DCfg
+
 from gym.utils.task_registry import task_registry
 
 task_registry.register("pendulum", Pendulum, PendulumCfg, PendulumRunnerCfg)
@@ -49,5 +55,9 @@ task_registry.register("cartpole", Cartpole, CartpoleCfg, CartpoleRunnerCfg)
 
 task_registry.register("humanoid_vanilla", HumanoidVanilla, HumanoidVanillaCfg, HumanoidVanillaRunnerCfg)
 task_registry.register("humanoid_controller", HumanoidController, HumanoidControllerCfg, HumanoidControllerRunnerCfg)
+
+# Register HI-12 environments
+task_registry.register("hi_controller", HiController, HiControllerCfg, HiControllerRunnerCfg)
+task_registry.register("hi_controller_ipc3d", HiControllerIPC3D, HiControllerIPC3DCfg, HiControllerRunnerCfg)
                       
 

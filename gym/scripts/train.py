@@ -40,12 +40,22 @@ import torch
 from gym.utils.logging_and_saving import local_code_save_helper, wandb_singleton
 
 import wandb
+from torch.utils.tensorboard import SummaryWriter
 
 def train(args):
     # * Setup environment and policy_runner
     env, env_cfg = task_registry.make_env(name=args.task, args=args)
 
     policy_runner, train_cfg = task_registry.make_alg_runner(env=env, name=args.task, args=args)
+
+    # * Setup TensorBoard
+    tensorboard_log_dir = os.path.join(policy_runner.log_dir, "tensorboard")
+    os.makedirs(tensorboard_log_dir, exist_ok=True)
+    tensorboard_writer = SummaryWriter(log_dir=tensorboard_log_dir)
+    
+    print(f"📊 TensorBoard logging to: {tensorboard_log_dir}")
+    print(f"   To view: tensorboard --logdir={tensorboard_log_dir}")
+    print(f"   Then open: http://localhost:6006")
 
     # * Setup wandb
     wandb_helper = wandb_singleton.WandbSingleton()
@@ -54,11 +64,15 @@ def train(args):
         env, env_cfg, train_cfg, policy_runner)
     wandb_helper.attach_runner(policy_runner=policy_runner)
 
+    # Attach TensorBoard writer to policy runner
+    policy_runner.tensorboard_writer = tensorboard_writer
+
     # * Train
     policy_runner.learn(num_learning_iterations=train_cfg.runner.max_iterations, 
                         init_at_random_ep_len=True)
     
-    # * Close wandb
+    # * Close logging
+    tensorboard_writer.close()
     wandb_helper.close_wandb()
 
 if __name__ == '__main__':

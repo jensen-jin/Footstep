@@ -69,9 +69,19 @@ class NonlinearController:
         # Convert second-order system to first-order: [x; dx]
         # dx = [dx; ddx] = [0 I; -D^-1*G -D^-1*C] * [x; dx] + [0; D^-1*H] * u
         
+        # Debug mass matrix (disabled)
+        # D_det = np.linalg.det(self.D)
+        # D_cond = np.linalg.cond(self.D)
+        # if D_det == 0 or D_cond > 1e12:
+        #     print(f"⚠️ Mass matrix D is singular or ill-conditioned!")
+        #     print(f"   D determinant: {D_det:.2e}")
+        #     print(f"   D condition: {D_cond:.2e}")
+        #     print(f"   D matrix:\n{self.D}")
+        
         try:
             D_inv = np.linalg.inv(self.D)
         except np.linalg.LinAlgError:
+            print("⚠️ D matrix inversion failed, using pseudo-inverse")
             # Use pseudo-inverse if D is singular
             D_inv = np.linalg.pinv(self.D)
         
@@ -83,9 +93,24 @@ class NonlinearController:
         self.A[self.dim:, :self.dim] = -D_inv @ self.G
         self.A[self.dim:, self.dim:] = -D_inv @ self.C
         
+        # Add small regularization to position states to ensure observability
+        if np.linalg.cond(self.A) > 1e12:
+            epsilon = 1e-6
+            self.A[0, 0] = -epsilon  # Small position damping
+            # print(f"🔧 Adding position regularization: A[0,0] = {-epsilon}")
+        
         # Control matrix B = [0; D^-1*H]
         self.B[:self.dim, :] = 0
         self.B[self.dim:, :] = D_inv @ self.H
+        
+        # Debug A matrix for the first call (disabled)
+        # if np.allclose(x, 0):  # Initial state
+        #     print(f"🔍 A matrix construction:")
+        #     print(f"   A matrix shape: {self.A.shape}")
+        #     print(f"   A matrix:\n{self.A}")
+        #     print(f"   A condition: {np.linalg.cond(self.A):.2e}")
+        #     print(f"   A rank: {np.linalg.matrix_rank(self.A)}")
+        #     print(f"   A eigenvalues: {np.linalg.eigvals(self.A)}")
         
     def update_sdre(self, theta: np.ndarray, dtheta: np.ndarray):
         """Update SDRE matrices - must be implemented by subclasses."""
@@ -160,6 +185,12 @@ class IPCController(NonlinearController):
         self.D[1, 0] = -m * l * cos_theta
         self.D[1, 1] = I + m * l * l
         
+        # Debug D matrix on first few calls (disabled)
+        # if abs(theta) < 0.01 and abs(dtheta) < 0.01:  # Initial state
+        #     print(f"🔍 Initial D matrix calculation:")
+        #     print(f"   D matrix:\n{self.D}")
+        #     print(f"   D determinant: {np.linalg.det(self.D):.6f}")
+        
         # Damping matrix C  
         self.C[0, 0] = b
         self.C[0, 1] = m * l * dtheta * sin_theta
@@ -170,7 +201,16 @@ class IPCController(NonlinearController):
         self.G[0, 0] = 0
         self.G[0, 1] = 0  
         self.G[1, 0] = 0
-        self.G[1, 1] = -m * g * l * sin_theta
+        
+        # Handle singularity at theta=0 by adding small regularization
+        gravity_term = -m * g * l * sin_theta
+        if abs(theta) < 1e-4:  # Near vertical (theta ≈ 0)
+            # Use small angle approximation: sin(theta) ≈ theta, but ensure non-zero
+            effective_theta = np.sign(theta) * max(abs(theta), 1e-4) if theta != 0 else 1e-4
+            gravity_term = -m * g * l * effective_theta
+            # print(f"🔧 Near-vertical regularization: theta={theta:.6f} → {effective_theta:.6f}")
+        
+        self.G[1, 1] = gravity_term
         
         # Update linearized system
         self._update_sdre(x)
@@ -246,7 +286,11 @@ class IPCView:
             K = R_inv @ B.T @ P
             return K
         except Exception as e:
-            print(f"LQR solve failed: {e}, using zeros")
+            print(f"⚠️ LQR solve failed: {e}")
+            print(f"   A shape: {A.shape}, condition: {np.linalg.cond(A):.2e}")
+            print(f"   B shape: {B.shape}, B norm: {np.linalg.norm(B):.2e}")
+            print(f"   Q shape: {Q.shape}, Q trace: {np.trace(Q):.2e}")
+            print(f"   R shape: {R.shape}, R trace: {np.trace(R):.2e}")
             return np.zeros((self.ipc.cdim, 2 * self.ipc.dim))
             
     def set_param(self, speed: float):
@@ -254,8 +298,10 @@ class IPCView:
         self.xd.fill(0)
         if self.mode == 0:  # Position control
             self.xd[0] = speed  # Desired cart position
+            # print(f"🎯 Target position set: {speed:.3f} m")
         else:  # Velocity control
             self.xd[2] = speed  # Desired cart velocity
+            # print(f"🎯 Target velocity set: {speed:.3f} m/s")
             
     def set_maximum_force(self, force: float):
         """Set maximum control force."""
@@ -263,10 +309,25 @@ class IPCView:
         
     def one_step(self, tau: Optional[float] = None) -> float:
         """Perform one simulation step with SDRE control."""
+        # Debug info before control step (disabled)
+        # if self.t < 0.1:  # Only print for first few steps to debug
+        #     print(f"🔄 Step t={self.t:.3f}s:")
+        #     print(f"   State: pos={self.x[0]:.3f}, ang={self.x[1]:.3f}, vel={self.x[2]:.3f}, avel={self.x[3]:.3f}")
+        #     print(f"   Target: {self.xd}")
+        #     print(f"   K shape: {self.K.shape}, K norm: {np.linalg.norm(self.K):.3f}")
+        
         ddtheta = self.ipc.one_step(
             self.x, self.U, self.dt, self.max_force,
             self.Q, self.R, self.K, self.xd, tau
         )
+        
+        # if self.t < 0.1:  # Debug after control step (disabled)
+        #     print(f"   Control force: {self.U[0]:.3f} N")
+        #     if isinstance(ddtheta, (float, int)):
+        #         print(f"   Angular accel: {ddtheta:.3f} rad/s²")
+        #     else:
+        #         print(f"   Angular accel: {ddtheta}")
+        
         self.t += self.dt
         return ddtheta
         
@@ -413,17 +474,23 @@ if __name__ == "__main__":
     
     print("🚗 Testing IPC3D Controller")
     print("=" * 40)
+    print(f"Parameters: cart_mass={params.mass_cart}kg, pole_mass={params.mass_pole}kg")
+    print(f"           pole_length={params.pole_length}m, max_force={params.max_force}N")
+    print(f"           control_mode={'velocity' if params.control_mode == 1 else 'position'}")
     
     # Set desired velocity
     controller.set_desired_velocity(1.0, 0.5)  # 1 m/s in X, 0.5 m/s in Z
+    print(f"Target set: X={1.0} m/s, Z={0.5} m/s")
     
     # Run simulation
+    print("\nRunning simulation:")
     for i in range(100):
         result = controller.step()
         
         if i % 20 == 0:
             state = controller.get_state()
+            fx, fz = controller.get_control_forces()
             print(f"Step {i:3d}: X_vel={state['x_cart_vel']:.3f}, Z_vel={state['z_cart_vel']:.3f}")
-            print(f"         Control: Fx={state['control_x']:.1f}N, Fz={state['control_z']:.1f}N")
+            print(f"         Control: Fx={fx:.1f}N, Fz={fz:.1f}N")
     
     print("✅ IPC3D test completed!")

@@ -406,7 +406,7 @@ class HiController(LeggedRobot):
         #test
         if (self.cfg.domain_rand.push_robots and (self.common_step_counter % self.cfg.domain_rand.push_interval_s == 0)):
         #if (self.cfg.domain_rand.push_robots ):
-                print('Pushing robots... ++ ')
+                # print('Pushing robots... ++ ')
                 self._maybe_push_robot()
                 #self._push_robots_real(env_ids)
                 #self._push_robot_base(is_play=True)
