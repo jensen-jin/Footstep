@@ -53,16 +53,16 @@ def train(args):
     os.makedirs(tensorboard_log_dir, exist_ok=True)
     tensorboard_writer = SummaryWriter(log_dir=tensorboard_log_dir)
     
-    print(f"📊 TensorBoard logging to: {tensorboard_log_dir}")
+    print(f"   TensorBoard logging to: {tensorboard_log_dir}")
     print(f"   To view: tensorboard --logdir={tensorboard_log_dir}")
-    print(f"   Then open: http://localhost:6006")
+    # print(f"   Then open: http://localhost:6006")
 
     # * Setup wandb
-    wandb_helper = wandb_singleton.WandbSingleton()
-    wandb_helper.setup_wandb(env_cfg=env_cfg, train_cfg=train_cfg, args=args, log_dir=policy_runner.log_dir)
-    local_code_save_helper.log_and_save(
-        env, env_cfg, train_cfg, policy_runner)
-    wandb_helper.attach_runner(policy_runner=policy_runner)
+    # wandb_helper = wandb_singleton.WandbSingleton()
+    # wandb_helper.setup_wandb(env_cfg=env_cfg, train_cfg=train_cfg, args=args, log_dir=policy_runner.log_dir)
+    # local_code_save_helper.log_and_save(
+    #     env, env_cfg, train_cfg, policy_runner)
+    # wandb_helper.attach_runner(policy_runner=policy_runner)
 
     # Attach TensorBoard writer to policy runner
     policy_runner.tensorboard_writer = tensorboard_writer
@@ -73,7 +73,7 @@ def train(args):
     
     # * Close logging
     tensorboard_writer.close()
-    wandb_helper.close_wandb()
+    # wandb_helper.close_wandb()
 
 if __name__ == '__main__':
     args = get_args()
