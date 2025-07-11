@@ -23,29 +23,29 @@ import scipy.linalg
 class IPC3DParams:
     """Parameters for 3D Inverted Pendulum on Cart model."""
     
-    # Physical parameters - 专门针对1kg:15kg速度跟踪优化
-    mass_cart: float = 1.0       # Cart mass (kg) - robot body mass  
-    mass_pole: float = 15.0      # Pole mass (kg) - distributed mass
-    pole_length: float = 0.56    # Pole length (m) - COM height
-    inertia: float = 4.7         # Pole moment of inertia (kg⋅m²) - 基于15kg*0.56²计算的合理惯性矩
+    # Physical parameters - 基于hi_12机器人实际质量13.8kg优化
+    mass_cart: float = 1.0       # Cart mass (kg) - 小车质量保持1kg
+    mass_pole: float = 13.0      # Pole mass (kg) - 倒立摆质量13kg (基于实际机器人质量)
+    pole_length: float = 0.559   # Pole length (m) - 质心高度0.559m (基于hi_12实际高度)
+    inertia: float = 4.0625      # Pole moment of inertia (kg⋅m²) - 基于13kg*0.559²精确计算
     gravity: float = 9.81        # Gravity (m/s²)
-    damping: float = 3        # System damping - 降低阻尼提升响应性
+    damping: float = 3.5         # System damping - 根据新质量分布调整
     
     # Control parameters
-    dt: float = 1/50.0           # Time step (s) - 提高仿真频率
-    max_force: float = 800.0     # Maximum control force (N) - 提高控制力上限
+    dt: float = 1/50.0           # Time step (s) - 保持50Hz仿真频率
+    max_force: float = 1000.0    # Maximum control force (N) - 根据更大质量调整控制力上限
     
-    # LQR weights - 解耦的权重参数设计
+    # LQR weights - 基于新质量分布重新调整的权重参数
     # 小车位置/速度控制权重
     q_cart_position: float = 0.01        # Cart position tracking weight (低权重用于速度控制)
-    q_cart_velocity: float = 10     # Cart velocity tracking weight
+    q_cart_velocity: float = 8.0         # Cart velocity tracking weight (略微降低，适应更大质量)
     
     # 摆杆角度/角速度控制权重
-    q_pole_angle: float = 25.0          # Pole angle stabilization weight
-    q_pole_angular_velocity: float = 30.0  # Pole angular velocity damping weight
+    q_pole_angle: float = 20.0           # Pole angle stabilization weight (适当降低，避免过度震荡)
+    q_pole_angular_velocity: float = 25.0  # Pole angular velocity damping weight (适当降低)
     
-    # 控制努力权重 - 静差消除优化后参数
-    r_control: float = 0.05              # 降低控制努力权重，允许更大控制力
+    # 控制努力权重 - 根据新控制力上限调整
+    r_control: float = 0.04              # 略微降低控制努力权重，允许更大控制力
     
     # Control mode: 0=position, 1=velocity
     control_mode: int = 1        # Default to velocity control

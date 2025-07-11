@@ -9,8 +9,8 @@ based on configuration and robot specifications.
 import numpy as np
 from typing import Dict, Any, Optional, Type
 from .base_guidance import BaseGuidanceModel, LegacyGuidanceWrapper
-from .ipc3d_controller import IPC3D, IPC3DParams, create_ipc3d_from_robot_spec
-from .ipc3d_guidance import IPC3DGuidanceModel
+from .ipc3d_controller import IPC3DParams, IPC_Plane
+from .ipc3d_guidance import IPCGuidanceModel
 
 
 class GuidanceModelFactory:
@@ -100,7 +100,7 @@ class GuidanceModelFactory:
         )
         
         # Create IPC3D guidance model
-        return IPC3DGuidanceModel(params, robot_spec, guidance_config)
+        return IPCGuidanceModel(params, robot_spec, guidance_config)
     
     @classmethod
     def _create_placeholder_model(cls, model_type: str, robot_spec, guidance_config) -> BaseGuidanceModel:
@@ -147,8 +147,8 @@ def register_builtin_models():
     """Register built-in guidance models."""
     # IPC3D model is registered via import
     try:
-        from .ipc3d_guidance import IPC3DGuidanceModel
-        GuidanceModelFactory.register_model('ipc3d_direct', IPC3DGuidanceModel)
+        from .ipc3d_guidance import IPCGuidanceModel
+        GuidanceModelFactory.register_model('ipc3d_direct', IPCGuidanceModel)
     except ImportError:
         pass
         
