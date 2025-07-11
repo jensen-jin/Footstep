@@ -58,6 +58,6 @@ task_registry.register("humanoid_controller", HumanoidController, HumanoidContro
 
 # Register HI-12 environments
 task_registry.register("hi_controller", HiController, HiControllerCfg, HiControllerRunnerCfg)
-task_registry.register("hi_controller_ipc3d", HiControllerIPC3D, HiControllerIPC3DCfg, HiControllerRunnerCfg)
+task_registry.register("hi_controller_ipc3d", HiControllerIPC3D, HiControllerIPC3DCfg, HiControllerRunnerCfg)  
                       
 

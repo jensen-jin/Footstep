@@ -29,6 +29,30 @@ except ImportError:
     from ipc3d_controller import IPC3DParams, IPC_Plane
     from ipc3d_orientation_manager import IPC3DOrientationManager, OrientationTrajectoryPoint
 
+@dataclass
+class IPC3DGuidanceModelParams:
+    """Configuration parameters for IPC3D guidance model."""
+    # Physical parameters
+    mass_cart: float = 1.0
+    mass_pole: float = 13.0
+    pole_length: float = 0.559
+    dt: float = 0.025
+    control_mode: int = 1
+
+    # Sampling constraints
+    min_step_distance: float = 0.05
+    max_step_distance: float = 0.58
+    min_step_time: float = 0.25
+    max_step_time: float = 0.7
+    max_target_speed: float = 2.3
+
+    # Footstep parameters
+    step_width: float = 0.2
+
+    # Orientation parameters
+    future_horizon: float = 2.0
+    footstep_duration: float = 0.5
+    min_angular_velocity: float = 0.01
 
 @dataclass
 class HumanoidReferenceState:
@@ -120,9 +144,9 @@ class SimplifiedIPCGuidanceModel(BaseGuidanceModel):
         self.cart_samples = []           # List of cart sampling points
         self.adaptive_step_time = 0.5    # Current adaptive step time
         
-        print(f"✅ Simplified IPC Guidance Model initialized")
-        print(f"   Sampling constraints: {self.min_step_distance:.2f}-{self.max_step_distance:.2f}m, {self.min_step_time:.2f}-{self.max_step_time:.2f}s")
-        print(f"   Max target speed: {self.max_target_speed:.1f} m/s")
+        # print(f"✅ Simplified IPC Guidance Model initialized")
+        # print(f"   Sampling constraints: {self.min_step_distance:.2f}-{self.max_step_distance:.2f}m, {self.min_step_time:.2f}-{self.max_step_time:.2f}s")
+        # print(f"   Max target speed: {self.max_target_speed:.1f} m/s")
         
     def initialize(self, robot_state: Dict[str, Any]) -> bool:
         """Initialize with robot state."""
@@ -160,7 +184,7 @@ class SimplifiedIPCGuidanceModel(BaseGuidanceModel):
             self.desired_angular_velocity, self.current_time
         )
         
-        print(f"🎯 Target set: forward={self.desired_forward_velocity:.2f} m/s, angular={self.desired_angular_velocity:.2f} rad/s")
+        # print(f"🎯 Target set: forward={self.desired_forward_velocity:.2f} m/s, angular={self.desired_angular_velocity:.2f} rad/s")
     
     def update(self, robot_state: Dict[str, Any], dt: Optional[float] = None) -> Dict[str, Any]:
         """Main update loop implementing the four-step process."""
@@ -364,12 +388,12 @@ class SimplifiedIPCGuidanceModel(BaseGuidanceModel):
             self.last_footstep_time = self.current_time
             
             # Debug output
-            if len(self.cart_samples) % 3 == 0:  # Every 3rd step
-                print(f"🦶 Step {len(self.cart_samples)}: {self.current_swing_foot} assigned to "
-                      f"({sampling_point[0]:.2f}, {sampling_point[1]:.2f}) | "
-                      f"Distance: {latest_sample['distance']:.2f}m | "
-                      f"Time: {latest_sample['step_time']:.2f}s | "
-                      f"Speed: {latest_sample['speed']:.2f} m/s")
+            # if len(self.cart_samples) % 3 == 0:  # Every 3rd step
+            #     print(f"🦶 Step {len(self.cart_samples)}: {self.current_swing_foot} assigned to "
+            #           f"({sampling_point[0]:.2f}, {sampling_point[1]:.2f}) | "
+            #           f"Distance: {latest_sample['distance']:.2f}m | "
+            #           f"Time: {latest_sample['step_time']:.2f}s | "
+            #           f"Speed: {latest_sample['speed']:.2f} m/s")
     
     def _step4_generate_unified_output(self, com_trajectory: Dict, cart_trajectory: Dict) -> Dict[str, Any]:
         """
@@ -603,6 +627,7 @@ class SimplifiedIPCGuidanceModel(BaseGuidanceModel):
 
 # For backwards compatibility
 IPCGuidanceModel = SimplifiedIPCGuidanceModel
+IPC3DGuidanceModel = SimplifiedIPCGuidanceModel
 
 
 if __name__ == "__main__":

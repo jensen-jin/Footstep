@@ -12,11 +12,14 @@ The guidance models generate reference trajectories for reinforcement learning.
 from .base_guidance import BaseGuidanceModel, GuidanceTrajectory
 from .ipc3d_controller import IPC3DParams, IPC_Plane
 from .guidance_factory import GuidanceModelFactory
+from .ipc3d_guidance import IPC3DGuidanceModel, IPC3DGuidanceModelParams
 
 __all__ = [
     'BaseGuidanceModel',
     'GuidanceTrajectory', 
     'IPC3DParams',
     'IPC_Plane',
-    'GuidanceModelFactory'
+    'GuidanceModelFactory',
+    'IPC3DGuidanceModel',
+    'IPC3DGuidanceModelParams'
 ]
