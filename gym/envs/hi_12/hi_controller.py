@@ -283,6 +283,9 @@ class HiController(LeggedRobot):
         self.contact_schedule = torch.zeros(
             self.num_envs, 1, dtype=torch.float, device=self.device, requires_grad=False
         )
+        self.base_euler_xyz = torch.zeros(
+            self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False
+        )
 
     def _compute_torques(self):
         self.desired_pos_target = self.dof_pos_target + self.default_dof_pos
@@ -373,6 +376,9 @@ class HiController(LeggedRobot):
         self.w[env_ids] = 0.0
         self.dstep_length[env_ids] = self.cfg.commands.dstep_length
         self.dstep_width[env_ids] = self.cfg.commands.dstep_width
+        
+        # * Reset base_euler_xyz observation
+        self.base_euler_xyz[env_ids] = get_euler_xyz_tensor(self.base_quat[env_ids])
 
     def _post_physics_step_callback(self):
         #print("_post_physics_step_callback")
@@ -863,8 +869,9 @@ class HiController(LeggedRobot):
         self.phase_cos = torch.cos(2 * torch.pi * self.phase)
 
         self.base_lin_vel_world = self.root_states[:, 7:10].clone()
-
         
+        # * Compute base_euler_xyz observation
+        self.base_euler_xyz = get_euler_xyz_tensor(self.base_quat)
         
     def check_termination(self):
         # print("check_termination")

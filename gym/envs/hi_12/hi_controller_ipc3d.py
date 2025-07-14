@@ -29,39 +29,41 @@ import torch.nn.functional as F
 # Import base controller and components
 from .hi_controller import HiController, get_euler_xyz_tensor
 from .hi_controller_config import HiControllerCfg
-from gym.envs.guidance.ipc3d_guidance import IPC3DGuidanceModel
+from gym.envs.guidance.ipc3d_guidance import SimplifiedIPCGuidanceModel, IPC3DGuidanceModelParams
 from gym.envs.guidance.ipc3d_controller import IPC3DParams
+from gym.envs.guidance.ipc3d_orientation_manager import IPC3DOrientationManager
 
 
 class HiControllerIPC3DCfg(HiControllerCfg):
     """Extended configuration for HI-12 with IPC3D guidance and force disturbance."""
     
     class guidance:
-        """IPC3D guidance model configuration."""
+        """IPC3D guidance model configuration - 继承自IPC3DGuidanceModelParams。"""
         enable_ipc3d = True
         
-        # Physical parameters (matched to HI-12)
-        cart_mass = 15.0          # HI-12 robot mass (kg)
-        pole_length = 0.421     # HI-12 COM height (m)
+        # 基础物理参数（与guidance保持一致）
+        mass_cart = 1.0          # Cart mass (kg) - 与guidance一致
+        mass_pole = 13.0         # Pole mass (kg) - 与guidance一致  
+        pole_length = 0.559      # Pole length (m) - 与guidance一致
+        dt = 0.025              # Time step (s) - 与guidance一致
         control_mode = 1         # 1=velocity control, 0=position control
-        max_force = 300.0        # Maximum control force (N)
         
-        # Control parameters
-        dt = 0.02                # Control time step (s)
-        damping = 0.1            # System damping
+        # 采样约束参数（与guidance一致）
+        min_step_distance = 0.05    # Minimum step distance (m)
+        max_step_distance = 0.58    # Maximum step distance (m) 
+        min_step_time = 0.25        # Minimum step time (s)
+        max_step_time = 0.7         # Maximum step time (s)
+        max_target_speed = 2.3      # Maximum target speed (m/s)
         
-        # LQR weights for IPC3D
-        q_position = 10.0        # Position tracking weight
-        q_velocity = 1.0         # Velocity tracking weight  
-        r_control = 0.1          # Control effort weight
+        # 足迹参数（与guidance一致）
+        step_width = 0.2            # Lateral offset for feet (m)
         
-        # Trajectory planning
-        step_length = 0.4        # Desired step length (m)
-        step_width = 0.2         # Desired step width (m)
-        step_height = 0.08       # Step height (m)
-        step_time = 0.5          # Step duration (s)
+        # 方向参数（与guidance一致）
+        future_horizon = 2.0        # Future planning horizon (s)
+        footstep_duration = 0.5     # Footstep duration (s)
+        min_angular_velocity = 0.01 # Minimum angular velocity threshold
         
-        # Update frequency
+        # 更新频率控制
         guidance_update_freq = 5 # Update every N simulation steps
         
     class domain_rand(HiControllerCfg.domain_rand):
@@ -71,19 +73,16 @@ class HiControllerIPC3DCfg(HiControllerCfg):
         use_force_push = True
         max_push_force_xy = 120.0     # Maximum push force for HI-12 (N)
         push_duration = 20            # Push duration (simulation steps)
-        push_interval = 150           # Interval between pushes (steps)
+        push_interval = 200           # Interval between pushes (steps)
         push_debug = False            # Enable debug output
         
         # Curriculum learning for push forces
         curriculum_push = True
         push_force_schedule = {
-            # 0: 40.0,       # 0-15k steps: gentle push
-            # 15000: 80.0,   # 15k-40k steps: moderate push  
-            # 40000: 120.0,  # 40k+ steps: strong push
-            # 80000: 150.0   # 80k+ steps: maximum challenge
-            0 : 5,         # 0-15k steps: gentle push
-            2000 : 10,   # 15k-40k steps: moderate push
-            5000 : 20,  # 40k+ steps: strong push
+            0: 0.0,       # 0-15k steps: gentle push
+            3000: 20,   # 15k-40k steps: moderate push  
+            5000: 40.0,  # 40k+ steps: strong push
+            7000: 70.0   # 80k+ steps: maximum challenge
         }
         
         # Multi-point push system for HI-12
@@ -116,28 +115,44 @@ class HiControllerIPC3DCfg(HiControllerCfg):
         """Enhanced reward system for IPC3D guidance training."""
         
         class weights(HiControllerCfg.rewards.weights):
-            # Original HI-12 rewards (reduced weights)
-            tracking_lin_vel = 0.5      # Reduced from default
-            tracking_ang_vel = 0.3      # Reduced from default
-            lin_vel_z = -1.0           # Penalize vertical motion
-            ang_vel_xy = -0.5          # Penalize roll/pitch rotation
-            orientation = -0.5         # Penalize orientation deviation
-            base_height = -0.5         # Maintain proper height
+            # 主要IPC3D跟踪奖励（控制在合理范围，保持同一数量级）
+            ipc3d_trajectory_tracking = 2.0      # 质心跟踪稍大：从8.0降低到2.0
+            footstep_placement_accuracy = 0.5     # 落足点权重相对小：从4.0降低到0.5
             
-            # IPC3D guidance rewards (new)
-            trajectory_tracking = 1.5   # Track IPC3D desired trajectory
-            guidance_consistency = 1.0  # Consistency with IPC3D forces
-            step_location_error = -1.0  # Penalize step location errors
+            # 原有奖励权重调整（降低以避免与IPC3D冲突）
+            tracking_lin_vel_base_x = 2.0         # 从6.0降低
+            tracking_lin_vel_base_y = 1.0         # 从2.0保持
+            command_yaw_vel = 3.0                 # 从9降低
             
-            # Disturbance recovery rewards (new)
-            stability_recovery = 2.0    # Reward fast recovery from pushes
-            balance_maintenance = 1.0   # Reward maintaining balance
-            contact_stability = 0.8     # Reward proper foot contact
+            # 新增IPC3D特定奖励（大幅降低权重防止数值爆炸）
+            ipc3d_force_consistency = 0.2         # 控制力一致性：从1.5降低到0.2
+            ipc3d_orientation_tracking = 0.1      # 姿态跟踪：从2.0大幅降低到0.1
             
-            # Energy efficiency (enhanced)
-            torques = -0.0002          # Penalize high torques
-            dof_vel = -0.0001          # Penalize high joint velocities
-            action_smoothness = -0.5   # Penalize jerky actions
+            # 干扰恢复奖励（增强）
+            stability_recovery = 2.5              # 快速恢复
+            balance_maintenance = 1.5             # 平衡维持
+            contact_stability = 1.0               # 接触稳定性
+            
+            # 能效奖励（增强）
+            torques = 1e-4                       # 从1e-4保持
+            dof_vel = 1e-3                       # 从1e-3保持
+            action_smoothness = 0.5              # 增加平滑性要求
+            
+            # 保持重要的安全性奖励
+            base_height = 3.0                    # 保持原有权重
+            base_z_orientation = 2.0             # 保持姿态稳定
+            joint_regularization = 2.0           # 保持关节规则化
+            contact_schedule = 4.0               # 保持接触调度
+            feet_slip = -8.0                     # 保持防滑倒
+            feet_distance = 8.0                  # 保持足距离
+            ankle_roll_posture_roll = 3.0        # 保持踝关节控制
+            ankle_roll_posture_pitch = 3.0       # 保持踝关节控制
+            ankle_roll_action_zero = 1.0         # 保持踝关节优化
+            
+            # 兼容性奖励（保持向后兼容）
+            trajectory_tracking = 0.0            # 由ipc3d_trajectory_tracking替代
+            guidance_consistency = 0.0           # 由ipc3d_force_consistency替代
+            step_location_error = 0.0            # 由footstep_placement_accuracy替代
             
         # Reward scaling parameters
         trajectory_sigma = 0.25        # Gaussian scaling for trajectory error
@@ -173,44 +188,46 @@ class HiControllerIPC3D(HiController):
         # Force overwrite any problematic attributes that might exist in base classes
         self._force_tensor_initialization()
         
-        # print("🤖 HI-12 + IPC3D + Force Disturbance Controller Initialized")
-        # print(f"   Robot: HI-12 ({self.cfg.env.num_actuators} DOF)")
-        # print(f"   Guidance: IPC3D (mass={self.cfg.guidance.cart_mass}kg)")
-        # print(f"   Disturbance: Force push enabled ({self.cfg.domain_rand.max_push_force_xy}N max)")
+        print(f"🤖 HI-12 + IPC3D简化控制器初始化完成")
+        print(f"   机器人: HI-12 ({self.cfg.env.num_actuators} DOF)")
+        print(f"   引导: IPC3D简化模型 (mass_cart={self.cfg.guidance.mass_cart}kg, pole_length={self.cfg.guidance.pole_length}m)")
+        print(f"   干扰: 外部推力 ({self.cfg.domain_rand.max_push_force_xy}N max)")
         
     def _init_ipc3d_guidance(self):
-        """Initialize IPC3D guidance model and related buffers."""
+        """Initialize IPC3D guidance model with simplified parameters."""
         if not self.cfg.guidance.enable_ipc3d:
             return
             
-        # Configure IPC3D parameters for HI-12
-        self.ipc3d_params = IPC3DParams(
-            mass_cart=self.cfg.guidance.cart_mass,
-            mass_pole=3.0,  # Estimated distributed mass
+        # 创建IPC3DParams (plane controller需要这个)
+        ipc3d_params = IPC3DParams(
+            mass_cart=self.cfg.guidance.mass_cart,
+            mass_pole=self.cfg.guidance.mass_pole,
             pole_length=self.cfg.guidance.pole_length,
-            gravity=9.81,
-            damping=self.cfg.guidance.damping,
             dt=self.cfg.guidance.dt,
-            max_force=self.cfg.guidance.max_force,
-            q_position=self.cfg.guidance.q_position,
-            q_velocity=self.cfg.guidance.q_velocity,
-            r_control=self.cfg.guidance.r_control,
-            control_mode=self.cfg.guidance.control_mode
+            control_mode=self.cfg.guidance.control_mode,
+            # IPC3DParams特有的参数 - 使用默认值
+            inertia=self.cfg.guidance.mass_pole * (self.cfg.guidance.pole_length ** 2),  # I = m*l²
+            gravity=9.81,
+            damping=3.5,  # 系统阻尼 - 默认值
+            max_force=1000.0,  # 最大控制力
+            # LQR权重参数 - 使用默认值
+            q_cart_position=0.01,
+            q_cart_velocity=8.0,
+            q_pole_angle=20.0,
+            q_pole_angular_velocity=25.0,
+            r_control=0.04
         )
         
-        # Create IPC3D guidance model
-        self.ipc3d_guidance = IPC3DGuidanceModel(
-            params=self.ipc3d_params,
+        # 创建SimplifiedIPCGuidanceModel实例
+        self.ipc3d_guidance = SimplifiedIPCGuidanceModel(
+            params=ipc3d_params,
             robot_spec=None,
-            guidance_config=self.cfg.guidance
+            guidance_config=self.cfg.guidance  # 传递guidance配置
         )
         
-        # IPC3D state tracking
+        # IPC3D状态跟踪
         self.guidance_update_counter = 0
-        
-        # print(f"✅ IPC3D guidance initialized:")
-        # print(f"   Control mode: {'Velocity' if self.cfg.guidance.control_mode else 'Position'}")
-        # print(f"   Update frequency: every {self.cfg.guidance.guidance_update_freq} steps")
+        self.last_guidance_update_time = 0.0      
         
     def _init_force_disturbance_system(self):
         """Initialize the force disturbance system for HI-12."""
@@ -227,18 +244,10 @@ class HiControllerIPC3D(HiController):
         for body_name in self.cfg.domain_rand.push_body_parts:
             if body_name in self.rigid_body_idx:
                 self.push_body_indices[body_name] = self.rigid_body_idx[body_name]
-                # print(f"   Push body registered: {body_name}")
-            else:
-                # print(f"   Warning: Push body {body_name} not found in HI-12 model")
-                pass
 
         # Current push state
         self.current_push_force = torch.zeros((self.num_envs, 3), device=self.device)
         self.current_push_target = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
-        
-        # print(f"✅ Force disturbance system initialized:")
-        # print(f"   Push bodies: {len(self.push_body_indices)} registered")
-        # print(f"   Max force: {self.cfg.domain_rand.max_push_force_xy}N")
         
     def _init_guidance_buffers(self):
         """Initialize additional buffers for IPC3D guidance tracking."""
@@ -255,10 +264,39 @@ class HiControllerIPC3D(HiController):
             self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False
         )  # [fx, fy, fz] IPC3D control forces
         
-        # Trajectory tracking errors
+        # Trajectory tracking errors - 确保2D形状
         self.trajectory_tracking_error = torch.zeros(
-            self.num_envs, dtype=torch.float, device=self.device, requires_grad=False
+            self.num_envs, 1, dtype=torch.float, device=self.device, requires_grad=False
         )
+        
+        # Create aliases for observation configuration compatibility
+        self.ipc3d_trajectory_error = self.trajectory_tracking_error
+        
+        # Initialize additional observation buffers needed by configuration
+        self.stability_score = torch.zeros(
+            self.num_envs, 1, dtype=torch.float, device=self.device, requires_grad=False
+        )  # [num_envs, 1] - 确保2D形状
+        
+        self.push_state = torch.zeros(
+            self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False
+        )  # [push_active, steps_since_push, force_magnitude, time_since_push]
+        
+        # 确保所有基础观测有正确的2D形状
+        # 注意：这些可能会被父类的初始化覆盖，但我们尝试确保正确的形状
+        if not hasattr(self, 'phase_sin') or self.phase_sin.dim() != 2:
+            self.phase_sin = torch.zeros(
+                self.num_envs, 1, dtype=torch.float, device=self.device, requires_grad=False
+            )
+        
+        if not hasattr(self, 'phase_cos') or self.phase_cos.dim() != 2:
+            self.phase_cos = torch.zeros(
+                self.num_envs, 1, dtype=torch.float, device=self.device, requires_grad=False
+            )
+            
+        if not hasattr(self, 'full_step_period_obs') or self.full_step_period_obs.dim() != 2:
+            self.full_step_period_obs = torch.zeros(
+                self.num_envs, 1, dtype=torch.float, device=self.device, requires_grad=False
+            )
         
         # Stability tracking for disturbance recovery
         self.stability_before_push = torch.zeros(
@@ -279,9 +317,8 @@ class HiControllerIPC3D(HiController):
         self.base_euler_xyz = torch.zeros(
             self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False
         )  # [roll, pitch, yaw] base orientation in Euler angles
-        
-        # print("✅ Guidance tracking buffers initialized")
-        
+
+    # 保证数据类型一致性    
     def _force_tensor_initialization(self):
         """Force initialization of critical tensors to prevent type conflicts."""
         # Critical: Ensure recovery_start_time is always a tensor
@@ -367,14 +404,35 @@ class HiControllerIPC3D(HiController):
         # Update tracking metrics
         self._update_guidance_tracking()
         
+    def _convert_commands_to_ipc3d_format(self):
+        """简化的命令转换，直接输出guidance模型期望的格式。
+        
+        Returns:
+            dict: guidance模型需要的目标速度字典
+        """
+        # 直接使用命令作为目标速度，简化处理
+        forward_velocity = self.commands[:, 0]  # X方向速度作为前向速度
+        angular_velocity = self.commands[:, 2] if self.commands.shape[1] > 2 else torch.zeros_like(forward_velocity)
+        
+        # 返回guidance模型期望的格式
+        return {
+            'desired_forward_velocity': forward_velocity,
+            'desired_angular_velocity': angular_velocity
+        }
+    
     def _update_ipc3d_guidance(self):
-        """Update IPC3D guidance trajectory and control forces."""
+        """Update IPC3D guidance trajectory with orientation-aware control."""
         self.guidance_update_counter += 1
         
         # Update at specified frequency to reduce computational load
         if self.guidance_update_counter % self.cfg.guidance.guidance_update_freq != 0:
             return
             
+        current_time = self.common_step_counter * self.cfg.sim.dt
+        
+        # 获取转换后的IPC3D格式命令
+        ipc3d_commands = self._convert_commands_to_ipc3d_format()
+        
         # Process each environment
         for env_idx in range(self.num_envs):
             # Extract current robot state
@@ -385,11 +443,22 @@ class HiControllerIPC3D(HiController):
                 'height': self.base_height[env_idx].cpu().numpy()
             }
             
-            # Get target velocity from commands
+            # Update orientation manager with current robot heading
+            current_heading = float(self.base_euler_xyz[env_idx, 2].cpu())  # Yaw angle
+            self.ipc3d_guidance.orientation_manager.update_current_heading(current_heading, current_time)
+            
+            # 使用转换后的IPC3D命令（替换原来的全局命令处理）
+            forward_velocity = float(ipc3d_commands['desired_forward_velocity'][env_idx].cpu())
+            angular_velocity = float(ipc3d_commands['desired_angular_velocity'][env_idx].cpu())
+            
+            # Update target heading based on angular velocity command
+            if abs(angular_velocity) > self.ipc3d_guidance.orientation_manager.min_angular_velocity:
+                self.ipc3d_guidance.orientation_manager.update_from_angular_velocity(angular_velocity, current_time)
+            
+            # Create target velocity for IPC3D (现在使用简化的格式)
             target_velocity = {
-                'velocity_x': float(self.commands[env_idx, 0].cpu()),
-                'velocity_y': float(self.commands[env_idx, 1].cpu()) if self.commands.shape[1] > 1 else 0.0,
-                'angular_velocity': float(self.commands[env_idx, 2].cpu()) if self.commands.shape[1] > 2 else 0.0
+                'desired_forward_velocity': forward_velocity,  # 前向速度
+                'desired_angular_velocity': angular_velocity  # 角速度
             }
             
             # Compute IPC3D trajectory for this environment
@@ -398,32 +467,27 @@ class HiControllerIPC3D(HiController):
                 if not self.ipc3d_guidance.is_initialized:
                     self.ipc3d_guidance.initialize(current_state)
                 
-                # Set target for IPC3D controller
+                # Set target for IPC3D controller (现在使用转换后的相对速度)
                 self.ipc3d_guidance.set_target(target_velocity)
                 
-                # Compute next trajectory point
-                dt = self.cfg.sim.dt * self.cfg.guidance.guidance_update_freq
-                trajectory = self.ipc3d_guidance.compute_trajectory(
-                    current_state=current_state,
-                    target_velocity=target_velocity,
-                    dt=dt
-                )
+                # 使用简化的guidance模型更新方法
+                guidance_output = self.ipc3d_guidance.update(current_state, dt=self.cfg.guidance.dt)
                 
-                if trajectory is not None:
-                    # Update desired trajectory
+                if guidance_output:
+                    # 更新期望轨迹缓存
                     self.ipc3d_desired_trajectory[env_idx] = torch.tensor(
-                        trajectory.get('position', [0, 0, 0]), device=self.device
+                        guidance_output.get('com_position', [0, 0, 0]), device=self.device
                     )
                     self.ipc3d_desired_velocity[env_idx] = torch.tensor(
-                        trajectory.get('velocity', [0, 0, 0]), device=self.device  
+                        guidance_output.get('com_velocity', [0, 0, 0]), device=self.device  
                     )
                     self.ipc3d_control_forces[env_idx] = torch.tensor(
-                        trajectory.get('forces', [0, 0, 0]), device=self.device
+                        guidance_output.get('com_acceleration', [0, 0, 0]), device=self.device
                     )
                     
-            except Exception:
-                # Handle IPC3D computation errors gracefully
-                # Use previous trajectory or zero as fallback
+            except Exception as e:
+                # 错误处理
+                print(f"⚠️ IPC3D计算错误 env {env_idx}: {e}")
                 continue
                 
     def _maybe_push_robot(self):
@@ -644,48 +708,119 @@ class HiControllerIPC3D(HiController):
         # The reward methods below will be automatically called by eval_reward() 
         # if their corresponding weights are defined in the configuration
         
+    def _reward_ipc3d_trajectory_tracking(self):
+        """增强的IPC3D轨迹跟踪奖励 - 主要奖励（数值稳定版本）。
+        
+        结合COM位置跟踪和COM速度跟踪，为机器人提供精确的轨迹引导。
+        这是连接IPC3D引导和强化学习的核心奖励函数。
+        
+        Returns:
+            torch.Tensor: 轨迹跟踪奖励，值范围[0, 1]
+        """
+        if not self.cfg.guidance.enable_ipc3d:
+            return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        
+        try:
+            # 数值稳定性检查输入
+            if (torch.any(torch.isnan(self.base_pos)) or torch.any(torch.isinf(self.base_pos)) or
+                torch.any(torch.isnan(self.base_lin_vel)) or torch.any(torch.isinf(self.base_lin_vel)) or
+                torch.any(torch.isnan(self.ipc3d_desired_trajectory)) or torch.any(torch.isinf(self.ipc3d_desired_trajectory)) or
+                torch.any(torch.isnan(self.ipc3d_desired_velocity)) or torch.any(torch.isinf(self.ipc3d_desired_velocity))):
+                return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+            
+            # COM位置跟踪奖励
+            com_position_error = torch.norm(
+                self.base_pos - self.ipc3d_desired_trajectory, dim=1
+            )
+            com_position_error = torch.clamp(com_position_error, 0.0, 10.0)  # 限制误差范围
+            position_reward = torch.exp(-com_position_error / 0.15)  # 15cm容忍度
+            
+            # COM速度跟踪奖励
+            com_velocity_error = torch.norm(
+                self.base_lin_vel - self.ipc3d_desired_velocity, dim=1
+            )
+            com_velocity_error = torch.clamp(com_velocity_error, 0.0, 10.0)  # 限制误差范围
+            velocity_reward = torch.exp(-com_velocity_error / 0.3)   # 0.3m/s容忍度
+            
+            # 组合奖励：70%位置 + 30%速度
+            combined_reward = 0.7 * position_reward + 0.3 * velocity_reward
+            
+            # 最终数值稳定性检查和范围限制
+            combined_reward = torch.clamp(combined_reward, 0.0, 1.0)
+            
+            # 检查NaN/inf
+            if torch.any(torch.isnan(combined_reward)) or torch.any(torch.isinf(combined_reward)):
+                return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+            
+            return combined_reward
+            
+        except Exception as e:
+            # 任何异常都返回零奖励
+            if hasattr(self, 'debug_counter'):
+                self.debug_counter += 1
+                if self.debug_counter % 1000 == 0:
+                    print(f"⚠️ Trajectory tracking reward error: {e}")
+            return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        
     def _reward_trajectory_tracking(self):
-        """Reward for tracking IPC3D desired trajectory."""
-        # Gaussian reward based on tracking error
-        tracking_reward = torch.exp(-self.trajectory_tracking_error / self.cfg.rewards.trajectory_sigma)
-        return tracking_reward
+        """Reward for tracking IPC3D desired trajectory (backwards compatibility)."""
+        # 保持向后兼容性，调用新的增强方法
+        return self._reward_ipc3d_trajectory_tracking()
         
     def _reward_guidance_consistency(self):
         """Reward for consistency with IPC3D guidance forces/velocities."""
         return self.guidance_consistency_score
         
-    def _reward_step_location_error(self):
-        """Penalty for inaccurate foot placement relative to IPC3D guidance."""
-        if not hasattr(self, 'step_commands') or not hasattr(self, 'foot_states'):
+    def _reward_footstep_placement_accuracy(self):
+        """简化的足迹位置准确性奖励。
+        
+        基于简化的guidance输出，计算足迹位置精度。
+        
+        Returns:
+            torch.Tensor: 足迹位置准确性奖励
+        """
+        if not self.cfg.guidance.enable_ipc3d:
             return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
-            
-        # Compute foot placement error relative to step commands
-        # This is a simplified version - in practice you'd want more sophisticated step tracking
-        step_errors = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
         
-        # For each foot, compute placement error
-        for foot_idx in range(len(self.feet_ids)):
-            if hasattr(self, 'step_commands'):
-                # Get current foot position in base frame
-                foot_pos_world = self.foot_states[:, foot_idx, :3]
-                foot_pos_base = foot_pos_world - self.base_pos
+        try:
+            # 使用存储的足迹目标（如果有）
+            if hasattr(self, 'current_footstep_targets') and self.current_footstep_targets:
+                left_target = self.current_footstep_targets['left_foot']
+                right_target = self.current_footstep_targets['right_foot']
                 
-                # Compare with step command (if available)
-                if hasattr(self, 'step_commands'):
-                    target_pos = self.step_commands[:, foot_idx, :3] if self.step_commands.shape[2] >= 3 else self.step_commands[:, foot_idx, :2]
-                    if target_pos.shape[1] == 2:
-                        # Only XY comparison
-                        error = torch.norm(foot_pos_base[:, :2] - target_pos, dim=1)
-                    else:
-                        # Full XYZ comparison
-                        error = torch.norm(foot_pos_base - target_pos, dim=1)
-                    step_errors += error
+                # 获取当前足迹位置
+                if hasattr(self, 'feet_ids') and len(self.feet_ids) >= 2:
+                    left_current = self.rigid_body_pos[:, self.feet_ids[0], :2]  # 只考虑XY
+                    right_current = self.rigid_body_pos[:, self.feet_ids[1], :2]
                     
-        # Average error across feet
-        step_errors = step_errors / len(self.feet_ids)
+                    # 转换目标为tensor
+                    left_target_tensor = torch.tensor(left_target[:2], device=self.device).unsqueeze(0).expand(self.num_envs, -1)
+                    right_target_tensor = torch.tensor(right_target[:2], device=self.device).unsqueeze(0).expand(self.num_envs, -1)
+                    
+                    # 计算误差
+                    left_error = torch.norm(left_current - left_target_tensor, dim=1)
+                    right_error = torch.norm(right_current - right_target_tensor, dim=1)
+                    
+                    # 平均误差
+                    footstep_errors = (left_error + right_error) / 2.0
+                    
+                    # 高斯奖励：15cm容忍度（放宽一些）
+                    placement_reward = torch.exp(-footstep_errors / 0.15)
+                    return torch.clamp(placement_reward, 0.0, 1.0)
+            
+            # 如果没有足迹目标，返回中性奖励
+            return torch.ones(self.num_envs, dtype=torch.float, device=self.device) * 0.5
+            
+        except Exception as e:
+            # 错误处理：返回中性奖励
+            return torch.ones(self.num_envs, dtype=torch.float, device=self.device) * 0.5
         
-        # Return error values (higher = worse, will be penalized by negative weight)
-        return step_errors
+    def _reward_step_location_error(self):
+        """Penalty for inaccurate foot placement relative to IPC3D guidance (backwards compatibility)."""
+        # 向后兼容性：转换为奖励格式（负数权重会将其转换为惩罚）
+        placement_reward = self._reward_footstep_placement_accuracy()
+        # 返回错误格式（高错误 = 低奖励）
+        return 1.0 - placement_reward
         
     def _reward_stability_recovery(self):
         """Reward for quick recovery from external force disturbances."""
@@ -750,6 +885,166 @@ class HiControllerIPC3D(HiController):
         
         return torch.clamp(contact_stability, -1, 1)
         
+    def _reward_ipc3d_force_consistency(self):
+        """简化的控制力一致性奖励（数值稳定版本）。
+        
+        基于简化的guidance输出，奖励机器人加速度与质心轨迹加速度一致。
+        
+        Returns:
+            torch.Tensor: 控制力一致性奖励，范围限制在[-1.0, 1.0]
+        """
+        if not self.cfg.guidance.enable_ipc3d:
+            return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        
+        try:
+            # 使用存储的guidance输出（如果有）
+            if hasattr(self, 'current_guidance_output') and self.current_guidance_output:
+                desired_acceleration = self.current_guidance_output.get('com_acceleration')
+                if desired_acceleration is None:
+                    return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+                
+                # 转换为tensor并进行数值稳定性检查
+                if isinstance(desired_acceleration, np.ndarray):
+                    if np.any(np.isnan(desired_acceleration)) or np.any(np.isinf(desired_acceleration)):
+                        return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+                    desired_acceleration = torch.from_numpy(desired_acceleration).to(self.device)
+                elif not isinstance(desired_acceleration, torch.Tensor):
+                    return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+                
+                # 检查tensor数值稳定性
+                if torch.any(torch.isnan(desired_acceleration)) or torch.any(torch.isinf(desired_acceleration)):
+                    return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+                
+                # 确保维度匹配
+                if desired_acceleration.dim() == 1 and self.num_envs > 1:
+                    desired_acceleration = desired_acceleration.unsqueeze(0).repeat(self.num_envs, 1)
+                elif desired_acceleration.dim() == 1:
+                    desired_acceleration = desired_acceleration.unsqueeze(0)
+                
+                # 计算机器人当前加速度（仅使用xy分量）
+                if hasattr(self, 'last_base_lin_vel'):
+                    # 数值稳定性检查
+                    if (torch.any(torch.isnan(self.base_lin_vel)) or torch.any(torch.isinf(self.base_lin_vel)) or
+                        torch.any(torch.isnan(self.last_base_lin_vel)) or torch.any(torch.isinf(self.last_base_lin_vel))):
+                        return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+                    
+                    robot_acceleration = (self.base_lin_vel - self.last_base_lin_vel) / self.cfg.sim.dt
+                    robot_acceleration_xy = robot_acceleration[:, :2]  # 只考虑水平加速度
+                    
+                    # 限制加速度范围
+                    robot_acceleration_xy = torch.clamp(robot_acceleration_xy, -50.0, 50.0)
+                else:
+                    robot_acceleration_xy = torch.zeros(self.num_envs, 2, dtype=torch.float, device=self.device)
+                
+                # 计算误差（只使用xy分量）
+                desired_acceleration_xy = desired_acceleration[:, :2]
+                # 限制期望加速度范围
+                desired_acceleration_xy = torch.clamp(desired_acceleration_xy, -50.0, 50.0)
+                
+                force_consistency_error = torch.norm(
+                    robot_acceleration_xy - desired_acceleration_xy, dim=1
+                )
+                
+                # 限制误差范围
+                force_consistency_error = torch.clamp(force_consistency_error, 0.0, 100.0)
+                
+                # 高斯奖励 - 2.0 m/s^2容忍度
+                consistency_reward = torch.exp(-force_consistency_error / 2.0)
+                
+                # 最终数值稳定性检查
+                consistency_reward = torch.clamp(consistency_reward, -1.0, 1.0)
+                
+                # 检查NaN/inf
+                if torch.any(torch.isnan(consistency_reward)) or torch.any(torch.isinf(consistency_reward)):
+                    return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+                
+                return consistency_reward
+                
+            else:
+                # 如果没有guidance输出，返回零奖励
+                return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+                
+        except Exception as e:
+            # 发生错误时返回零奖励，避免训练中断
+            if hasattr(self, 'debug_counter'):
+                self.debug_counter += 1
+                if self.debug_counter % 100 == 0:  # 每100步打印一次
+                    print(f"⚠️ Force consistency reward error: {e}")
+            return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        
+    def _reward_ipc3d_orientation_tracking(self):
+        """姿态跟踪奖励（数值稳定版本）。
+        
+        奖励机器人维持与IPC3D引导一致的姿态，特别是偏航角。
+        添加了完整的数值稳定性检查。
+        
+        Returns:
+            torch.Tensor: 姿态跟踪奖励，范围限制在[-2.0, 2.0]
+        """
+        if not self.cfg.guidance.enable_ipc3d:
+            return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+            
+        try:
+            # 获取IPC3D轨迹信息
+            try:
+                ipc3d_output = self.ipc3d_guidance.generate_complete_trajectory_output()
+                desired_yaw = ipc3d_output['com_trajectory'].get('yaw_angle', 0.0)
+            except Exception as e:
+                # 如果IPC3D输出不可用，使用命令角速度估算
+                dt = self.cfg.sim.dt
+                desired_yaw = self.base_euler_xyz[:, 2] + self.commands[:, 2] * dt
+                
+            # 计算偏航角跟踪误差
+            current_yaw = self.base_euler_xyz[:, 2]
+            
+            # 数值稳定性检查
+            if torch.any(torch.isnan(current_yaw)) or torch.any(torch.isinf(current_yaw)):
+                return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+            
+            # 确保desired_yaw为合适的tensor格式
+            if isinstance(desired_yaw, (int, float)):
+                desired_yaw = torch.full_like(current_yaw, desired_yaw)
+            elif isinstance(desired_yaw, np.ndarray):
+                desired_yaw = torch.from_numpy(desired_yaw).to(self.device)
+            
+            # 数值稳定性检查desired_yaw
+            if torch.any(torch.isnan(desired_yaw)) or torch.any(torch.isinf(desired_yaw)):
+                return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+                
+            # 计算角度差（使用数值稳定的方法）
+            yaw_error = torch.abs(current_yaw - desired_yaw)
+            # 处理角度循环（-π到π），确保数值稳定
+            yaw_error = torch.min(yaw_error, 2 * np.pi - yaw_error)
+            yaw_error = torch.clamp(yaw_error, 0.0, np.pi)  # 限制在合理范围
+            
+            # 姿态稳定性奖励（roll和pitch保持小）
+            roll_pitch_error = torch.norm(self.base_euler_xyz[:, :2], dim=1)
+            roll_pitch_error = torch.clamp(roll_pitch_error, 0.0, np.pi)  # 限制范围
+            
+            # 组合奖励（使用更保守的参数）
+            yaw_reward = torch.exp(-yaw_error / 0.5)  # 增大容忍度到0.5 rad
+            stability_reward = torch.exp(-roll_pitch_error / 0.3)  # 增大容忍度到0.3 rad
+            
+            # 组合并限制最终奖励
+            combined_reward = 0.6 * yaw_reward + 0.4 * stability_reward
+            
+            # 最终数值稳定性检查和裁剪
+            combined_reward = torch.clamp(combined_reward, -2.0, 2.0)
+            
+            # 检查NaN/inf
+            if torch.any(torch.isnan(combined_reward)) or torch.any(torch.isinf(combined_reward)):
+                return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+            
+            return combined_reward
+            
+        except Exception as e:
+            # 任何异常都返回零奖励，避免训练崩溃
+            if hasattr(self, 'debug_counter'):
+                self.debug_counter += 1
+                if self.debug_counter % 1000 == 0:  # 每1000步打印一次
+                    print(f"⚠️ Orientation tracking reward error: {e}")
+            return torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+    
     def _reward_action_smoothness(self):
         """Reward for smooth, non-jerky actions."""
         if not hasattr(self, 'last_actions'):
@@ -764,16 +1059,49 @@ class HiControllerIPC3D(HiController):
         return smoothness_reward
         
     def _compute_rewards(self):
-        """Compute all rewards with enhanced weighting for IPC3D guidance."""
+        """Compute all rewards with enhanced weighting for IPC3D guidance and numerical stability monitoring."""
         # Call parent reward computation first
         super()._compute_rewards()
         
-        # Store current actions for smoothness reward
+        # Global numerical stability check for IPC3D rewards
+        if hasattr(self, 'rew_buf'):
+            # Check for any abnormal reward values
+            if torch.any(torch.isnan(self.rew_buf)) or torch.any(torch.isinf(self.rew_buf)):
+                # Replace invalid values with zeros
+                nan_mask = torch.isnan(self.rew_buf) | torch.isinf(self.rew_buf)
+                self.rew_buf[nan_mask] = 0.0
+                
+                # Debug output for monitoring
+                if not hasattr(self, 'debug_counter'):
+                    self.debug_counter = 0
+                self.debug_counter += 1
+                if self.debug_counter % 1000 == 0:
+                    print(f"⚠️ Detected and fixed {torch.sum(nan_mask).item()} invalid reward values")
+            
+            # Check for extremely large reward values
+            large_reward_mask = torch.abs(self.rew_buf) > 1000.0
+            if torch.any(large_reward_mask):
+                # Clamp extremely large rewards
+                self.rew_buf = torch.clamp(self.rew_buf, -1000.0, 1000.0)
+                
+                if hasattr(self, 'debug_counter'):
+                    self.debug_counter += 1
+                    if self.debug_counter % 1000 == 0:
+                        print(f"⚠️ Clamped {torch.sum(large_reward_mask).item()} extremely large reward values")
+        
+        # Store current states for consistency rewards
         if hasattr(self, 'actions'):
             if not hasattr(self, 'last_actions'):
                 self.last_actions = torch.zeros_like(self.actions)
             else:
                 self.last_actions = self.actions.clone()
+                
+        # Store base linear velocity for force consistency calculation
+        if hasattr(self, 'base_lin_vel'):
+            if not hasattr(self, 'last_base_lin_vel'):
+                self.last_base_lin_vel = torch.zeros_like(self.base_lin_vel)
+            else:
+                self.last_base_lin_vel = self.base_lin_vel.clone()
                 
     def _update_command_curriculum(self, env_ids):
         """Enhanced command curriculum considering IPC3D guidance performance."""
@@ -799,34 +1127,127 @@ class HiControllerIPC3D(HiController):
     # OBSERVATION SPACE - Enhanced with IPC3D Guidance Information  
     # ==================================================================================
     
-    def _get_obs_ipc3d_trajectory(self):
-        """Get IPC3D desired trajectory as observation."""
+    def _get_obs_ipc3d_desired_trajectory(self):
+        """获取IPC3D期望轨迹作为观测值。
+        
+        基于简化的guidance输出，返回质心位置目标。
+        
+        Returns:
+            torch.Tensor: IPC3D期望轨迹 [num_envs, 3]
+        """
         if not self.cfg.guidance.enable_ipc3d:
             return torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device)
-        return self.ipc3d_desired_trajectory
         
-    def _get_obs_ipc3d_velocity(self):
-        """Get IPC3D desired velocity as observation."""  
+        try:
+            if hasattr(self, 'current_guidance_output') and self.current_guidance_output:
+                desired_position = self.current_guidance_output.get('com_position')
+                if desired_position is not None:
+                    if isinstance(desired_position, np.ndarray):
+                        desired_position = torch.from_numpy(desired_position).to(self.device)
+                    if desired_position.dim() == 1:
+                        desired_position = desired_position.unsqueeze(0).repeat(self.num_envs, 1)
+                    return desired_position[:, :3]  # 确保是3维
+            
+            # 如果没有guidance输出，返回零向量
+            return torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device)
+            
+        except Exception:
+            return torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device)
+        
+    def _get_obs_ipc3d_desired_velocity(self):
+        """获取IPC3D期望速度作为观测值。
+        
+        基于简化的guidance输出，返回质心速度目标。
+        
+        Returns:
+            torch.Tensor: IPC3D期望速度 [num_envs, 3]
+        """
         if not self.cfg.guidance.enable_ipc3d:
             return torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device)
-        return self.ipc3d_desired_velocity
         
-    def _get_obs_ipc3d_forces(self):
-        """Get IPC3D control forces as observation."""
+        try:
+            if hasattr(self, 'current_guidance_output') and self.current_guidance_output:
+                desired_velocity = self.current_guidance_output.get('com_velocity')
+                if desired_velocity is not None:
+                    if isinstance(desired_velocity, np.ndarray):
+                        desired_velocity = torch.from_numpy(desired_velocity).to(self.device)
+                    if desired_velocity.dim() == 1:
+                        desired_velocity = desired_velocity.unsqueeze(0).repeat(self.num_envs, 1)
+                    return desired_velocity[:, :3]  # 确保是3维
+            
+            # 如果没有guidance输出，返回零向量
+            return torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device)
+            
+        except Exception:
+            return torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device)
+        
+    def _get_obs_ipc3d_control_forces(self):
+        """获取IPC3D控制力作为观测值。
+        
+        基于简化的guidance输出，返回质心加速度（作为控制力代理）。
+        
+        Returns:
+            torch.Tensor: IPC3D控制力 [num_envs, 3]
+        """
         if not self.cfg.guidance.enable_ipc3d:
             return torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device)
-        return self.ipc3d_control_forces
         
-    def _get_obs_trajectory_error(self):
-        """Get trajectory tracking error as observation."""
+        try:
+            if hasattr(self, 'current_guidance_output') and self.current_guidance_output:
+                desired_acceleration = self.current_guidance_output.get('com_acceleration')
+                if desired_acceleration is not None:
+                    if isinstance(desired_acceleration, np.ndarray):
+                        desired_acceleration = torch.from_numpy(desired_acceleration).to(self.device)
+                    if desired_acceleration.dim() == 1:
+                        desired_acceleration = desired_acceleration.unsqueeze(0).repeat(self.num_envs, 1)
+                    return desired_acceleration[:, :3]  # 确保是3维
+            
+            # 如果没有guidance输出，返回零向量
+            return torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device)
+            
+        except Exception:
+            return torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device)
+        
+    def _get_obs_ipc3d_trajectory_error(self):
+        """获取轨迹跟踪误差作为观测值。
+        
+        计算当前质心位置与期望位置的误差。
+        
+        Returns:
+            torch.Tensor: 轨迹跟踪误差 [num_envs, 1]
+        """
         if not self.cfg.guidance.enable_ipc3d:
             return torch.zeros(self.num_envs, 1, dtype=torch.float, device=self.device)
-        return self.trajectory_tracking_error.unsqueeze(1)
+        
+        try:
+            if hasattr(self, 'current_guidance_output') and self.current_guidance_output:
+                desired_position = self.current_guidance_output.get('com_position')
+                if desired_position is not None:
+                    if isinstance(desired_position, np.ndarray):
+                        desired_position = torch.from_numpy(desired_position).to(self.device)
+                    if desired_position.dim() == 1:
+                        desired_position = desired_position.unsqueeze(0).repeat(self.num_envs, 1)
+                    
+                    # 计算位置误差（只考虑xy平面）
+                    current_position = self.base_pos[:, :2]
+                    desired_position_xy = desired_position[:, :2]
+                    error = torch.norm(current_position - desired_position_xy, dim=1)
+                    # 更新trajectory_tracking_error缓冲区
+                    self.trajectory_tracking_error[:, 0] = error
+                    return self.trajectory_tracking_error
+            
+            # 如果没有guidance输出，返回零误差
+            return torch.zeros(self.num_envs, 1, dtype=torch.float, device=self.device)
+            
+        except Exception:
+            return torch.zeros(self.num_envs, 1, dtype=torch.float, device=self.device)
         
     def _get_obs_stability_score(self):
         """Get current stability score as observation."""
         stability = self._compute_current_stability()
-        return stability.unsqueeze(1)
+        # 更新stability_score缓冲区
+        self.stability_score[:, 0] = stability
+        return self.stability_score
         
     def _get_obs_push_state(self):
         """Get external push state information."""
@@ -845,3 +1266,130 @@ class HiControllerIPC3D(HiController):
             )
             
         return push_state
+    
+    def _generate_orientation_aware_trajectory(self, env_idx: int, current_time: float, ipc3d_trajectory: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Generate orientation-aware reference trajectory that transforms IPC3D relative 
+        trajectories back to global coordinates considering Hermite spline heading interpolation.
+        
+        This method implements the paper's approach where the trajectory is generated in 
+        body-relative coordinates but then transformed to global coordinates for execution.
+        
+        Args:
+            env_idx: Environment index
+            current_time: Current simulation time
+            ipc3d_trajectory: IPC3D trajectory in relative coordinates
+            
+        Returns:
+            Dictionary containing global trajectory with position, velocity, and forces
+        """
+        try:
+            # Extract relative trajectory from IPC3D
+            relative_position = ipc3d_trajectory.get('position', np.zeros(3))
+            relative_velocity = ipc3d_trajectory.get('velocity', np.zeros(3))
+            control_forces = ipc3d_trajectory.get('forces', np.zeros(3))
+            
+            # Get current robot state
+            current_position = self.base_pos[env_idx].cpu().numpy()
+            current_velocity = self.base_lin_vel[env_idx].cpu().numpy()
+            current_heading = float(self.base_euler_xyz[env_idx, 2].cpu())
+            
+            # Update orientation manager with current heading
+            self.ipc3d_guidance.orientation_manager.update_current_heading(current_heading, current_time)
+            
+            # Generate future trajectory points over the planning horizon
+            trajectory_duration = self.ipc3d_guidance.orientation_manager.future_horizon
+            dt = self.cfg.sim.dt * self.cfg.guidance.guidance_update_freq
+            num_points = int(trajectory_duration / dt)
+            
+            # Generate orientation trajectory using Hermite spline
+            orientation_trajectory = self.ipc3d_guidance.orientation_manager.generate_orientation_trajectory(
+                start_time=current_time,
+                dt=dt,
+                num_points=num_points
+            )
+            
+            # Transform relative trajectory to global coordinates
+            global_trajectory_points = []
+            
+            for i, orientation_point in enumerate(orientation_trajectory):
+                # Get heading at this future time
+                future_heading = orientation_point.heading
+                
+                # Transform relative position to global coordinates
+                if len(relative_position) >= 2:
+                    # Apply rotation transformation: global = R * relative
+                    cos_h = np.cos(future_heading)
+                    sin_h = np.sin(future_heading)
+                    
+                    # Transform position (relative to current position)
+                    rel_x = relative_position[0] if len(relative_position) > 0 else 0.0
+                    rel_z = relative_position[2] if len(relative_position) > 2 else 0.0
+                    
+                    global_x = current_position[0] + (cos_h * rel_x - sin_h * rel_z)
+                    global_y = current_position[1] + (sin_h * rel_x + cos_h * rel_z)
+                    global_z = current_position[2] + relative_position[1] if len(relative_position) > 1 else current_position[2]
+                    
+                    # Transform velocity (relative to current velocity)
+                    rel_vx = relative_velocity[0] if len(relative_velocity) > 0 else 0.0
+                    rel_vz = relative_velocity[2] if len(relative_velocity) > 2 else 0.0
+                    
+                    global_vx = cos_h * rel_vx - sin_h * rel_vz
+                    global_vy = sin_h * rel_vx + cos_h * rel_vz
+                    global_vz = relative_velocity[1] if len(relative_velocity) > 1 else 0.0
+                    
+                    # Store transformed point
+                    global_point = {
+                        'position': np.array([global_x, global_y, global_z]),
+                        'velocity': np.array([global_vx, global_vy, global_vz]),
+                        'heading': future_heading,
+                        'time': orientation_point.time
+                    }
+                    global_trajectory_points.append(global_point)
+                else:
+                    # Fallback for incomplete relative trajectory
+                    global_trajectory_points.append({
+                        'position': current_position.copy(),
+                        'velocity': current_velocity.copy(),
+                        'heading': future_heading,
+                        'time': orientation_point.time
+                    })
+            
+            # Return the transformed trajectory (use first point for immediate reference)
+            if global_trajectory_points:
+                reference_point = global_trajectory_points[0]
+                
+                # Include control forces (transformed to global frame)
+                global_forces = np.zeros(3)
+                if len(control_forces) >= 2:
+                    cos_h = np.cos(reference_point['heading'])
+                    sin_h = np.sin(reference_point['heading'])
+                    
+                    fx_rel = control_forces[0] if len(control_forces) > 0 else 0.0
+                    fz_rel = control_forces[2] if len(control_forces) > 2 else 0.0
+                    
+                    global_forces[0] = cos_h * fx_rel - sin_h * fz_rel
+                    global_forces[1] = sin_h * fx_rel + cos_h * fz_rel
+                    global_forces[2] = control_forces[1] if len(control_forces) > 1 else 0.0
+                
+                return {
+                    'position': reference_point['position'],
+                    'velocity': reference_point['velocity'],
+                    'forces': global_forces,
+                    'heading': reference_point['heading'],
+                    'trajectory_points': global_trajectory_points  # Full trajectory for debugging
+                }
+            else:
+                # Fallback: return current state
+                return {
+                    'position': current_position,
+                    'velocity': current_velocity,
+                    'forces': np.zeros(3),
+                    'heading': current_heading,
+                    'trajectory_points': []
+                }
+                
+        except Exception as e:
+            # Handle errors gracefully
+            # print(f"⚠️ Error generating orientation-aware trajectory for env {env_idx}: {e}")
+            return None

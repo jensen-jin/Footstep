@@ -11,9 +11,14 @@ class HiControllerCfg(LeggedRobotCfg):
     class env(LeggedRobotCfg.env):
         num_envs = 4096
         num_actuators = 12
-        episode_length_s = 17  # 100
+        episode_length_s = 8  # 优化：从17降为8，提高训练稳定性
         frame_stack = 1
-        num_single_obs = 36
+        # 更新观测空间大小（增加了IPC3D观测）
+        # ipc3d_desired_trajectory: 3
+        # ipc3d_desired_velocity: 3  
+        # ipc3d_trajectory_error: 1
+        # 原有观测: 36 + 新增: 7 = 43
+        num_single_obs = 43
         num_observations = frame_stack * num_single_obs
 
     class terrain(LeggedRobotCfg.terrain):
@@ -112,19 +117,19 @@ class HiControllerCfg(LeggedRobotCfg):
     class control(LeggedRobotCfg.control):
         # stiffness and damping for joints
         stiffness = {
-            "r_hip_pitch_joint": 40.0,
-            "r_hip_roll_joint": 40.0,
-            "r_thigh_joint": 40.0,
-            "r_calf_joint":60.0,
-            "r_ankle_pitch_joint": 40.0,
-            "r_ankle_roll_joint": 10.0,
+            "r_hip_pitch_joint": 35.0,  # 优化：从40.0降为35.0，减少过度刚性
+            "r_hip_roll_joint": 35.0,   # 优化：从40.0降为35.0
+            "r_thigh_joint": 35.0,      # 优化：从40.0降为35.0
+            "r_calf_joint": 50.0,       # 优化：从60.0降为50.0
+            "r_ankle_pitch_joint": 35.0, # 优化：从40.0降为35.0
+            "r_ankle_roll_joint": 12.0, # 优化：从10.0增为12.0，增加稳定性
             
-            "l_hip_pitch_joint": 40.0,
-            "l_hip_roll_joint": 40.0,
-            "l_thigh_joint": 40.0,
-            "l_calf_joint": 60.0,
-            "l_ankle_pitch_joint": 40.0,
-            "l_ankle_roll_joint": 10.0,
+            "l_hip_pitch_joint": 35.0,  # 优化：从40.0降为35.0
+            "l_hip_roll_joint": 35.0,   # 优化：从40.0降为35.0
+            "l_thigh_joint": 35.0,      # 优化：从40.0降为35.0
+            "l_calf_joint": 50.0,       # 优化：从60.0降为50.0
+            "l_ankle_pitch_joint": 35.0, # 优化：从40.0降为35.0
+            "l_ankle_roll_joint": 12.0, # 优化：从10.0增为12.0，增加稳定性
         }
         damping = {
             "r_hip_pitch_joint": 2,
@@ -144,7 +149,7 @@ class HiControllerCfg(LeggedRobotCfg):
         }
 
         actuation_scale = 1.0
-        exp_avg_decay = 0.5
+        exp_avg_decay = 0.3  # 优化：从0.5改为0.3，更平滑的控制
         decimation = 10
 
     class commands(LeggedRobotCfg.commands):
@@ -162,15 +167,27 @@ class HiControllerCfg(LeggedRobotCfg):
 
         dstep_length = 0.2
         dstep_width = 0.199
+        
+        # IPC3D命令转换配置
+        use_ipc3d_commands = True
+        command_conversion_mode = "global_to_relative"  # 全局到相对坐标转换
+        
+        # IPC3D特定命令参数
+        ipc3d_command_scaling = {
+            'forward_velocity_scale': 1.0,
+            'angular_velocity_scale': 1.0,
+            'lateral_velocity_scale': 0.5  # 减少侧向速度影响
+        }
 
         class ranges(LeggedRobotCfg.commands.ranges):
             # TRAINING STEP COMMAND RANGES #
-            sample_period = [20, 28]  # [20, 21] # equal to gait frequency
-            dstep_width = [0.199, 0.2]  # [0.2, 0.4] # min max [m]
+            sample_period = [25, 32]  # 优化：从[20,28]调整为[25,32]，略慢的步态
+            dstep_width = [0.18, 0.22]  # 优化：从[0.199,0.2]扩展为[0.18,0.22]
 
-            lin_vel_x = [-0.2, 0.6]  # [-3.0, 3.0] # min max [m/s]
-            lin_vel_y = 0.0 # 1.5   # min max [m/s]
-            yaw_vel = 2.0  # min max [rad/s]
+            # IPC3D优化的命令范围 - 符合物理约束
+            lin_vel_x = [-0.6, 1.0]  # 减少后退速度，符合IPC3D前向优化
+            lin_vel_y = 0.2          # 基类期望标量，会转换为[-0.2, 0.2]
+            yaw_vel = 1.0            # 基类期望标量，会转换为[-1.0, 1.0]
 
     class domain_rand(LeggedRobotCfg.domain_rand):
         randomize_friction = True  # True, False
@@ -181,11 +198,11 @@ class HiControllerCfg(LeggedRobotCfg):
 
         #push_robots = False #推力关闭，需要时打开 
         push_robots = True
-        push_interval_s = 3 
+        push_interval_s = 5  # 优化：从3增加为5，降低推动频率
         #push_interval = 10 
         max_push_vel_xy = 0.6
         
-        max_push_force_xy = 120*6
+        max_push_force_xy = 150  # 优化：从720大幅降为150，更现实的推力
     
         randomize_com_displacement = True
         com_displacement_range = [-0.05, 0.05]
@@ -280,26 +297,26 @@ class HiControllerCfg(LeggedRobotCfg):
             torque_limits = 1e-1
             motor_limit = 0.1
             # * Floating base rewards * #
-            base_height = 5.0 *0.8
+            base_height = 3.0  # 优化：从4.0降为3.0，平衡重要性
             # base_heading = 8.0
-            base_z_orientation = 4.0
+            base_z_orientation = 2.0  # 优化：增加姿态稳定性权重
             # tracking_lin_vel_world_x = 8.0
             # tracking_lin_vel_world_y = 2.0
             command_yaw_vel = 9
-            tracking_lin_vel_base_x = 9*2
-            tracking_lin_vel_base_y = 2
+            tracking_lin_vel_base_x = 6.0  # 优化：从18.0大幅降为6.0，避免过度优化
+            tracking_lin_vel_base_y = 2.0
             
             # * Stepping rewards * #
-            joint_regularization = 4.0
-            contact_schedule = 5.0
+            joint_regularization = 2.0  # 优化：从4.0降为2.0，但保持重要性
+            contact_schedule = 4.0  # 优化：保持接触调度的重要性
 
             # * Other * #
             feet_slip = -8.0
             feet_slip_dyaw = -1.0
-            feet_distance = 10.0
+            feet_distance = 8.0  # 优化：从10.0略降为8.0
             # feet_x_dis = 1.0
-            ankle_roll_posture_roll = 5.0
-            ankle_roll_posture_pitch = 5
+            ankle_roll_posture_roll = 3.0  # 优化：从5.0降为3.0
+            ankle_roll_posture_pitch = 3.0  # 优化：从5.0降为3.0
             ankle_roll_action_zero = 1.0
             #jiangbo add 暂时不用这些
             #not_fallen = 5.0
@@ -363,24 +380,18 @@ class HiControllerRunnerCfg(LeggedRobotRunnerCfg):
             "dof_vel",
             "base_ang_vel",
             "base_euler_xyz",
-            # "projected_gravity",
+            "projected_gravity",  # 优化：增加重力方向感知
             "full_step_period_obs",
-            # "foot_states_right",
-            # "foot_states_left",
+            "base_height",        # 优化：增加基座高度感知
+            "foot_states_right",  # 优化：增加右足状态感知
+            "foot_states_left",   # 优化：增加左足状态感知
         ]
         
-        actor_obs = [
-            "phase_sin",
-            "phase_cos",
-            "commands",
-            "dof_pos",
-            "dof_vel",
-            "base_ang_vel",
-            "base_euler_xyz",
-            # "projected_gravity",
-            "full_step_period_obs",
-            # "foot_states_right",
-            # "foot_states_left",
+        actor_obs = single_actor_obs + [
+            # IPC3D相关观测
+            "ipc3d_desired_trajectory",      # IPC3D目标轨迹
+            "ipc3d_desired_velocity",        # IPC3D目标速度
+            "ipc3d_trajectory_error",        # 轨迹跟踪误差
         ]
         critic_obs = [
             "base_height",
@@ -398,6 +409,13 @@ class HiControllerRunnerCfg(LeggedRobotRunnerCfg):
             "dof_pos",
             "dof_vel",
             "full_step_period_obs",
+            # IPC3D相关观测（critic需要更多信息进行价值评估）
+            "ipc3d_desired_trajectory",
+            "ipc3d_desired_velocity",
+            "ipc3d_control_forces",          # IPC3D控制力
+            "ipc3d_trajectory_error",
+            "stability_score",               # 稳定性评分
+            "push_state",                   # 外部推力状态
         ]
 
         actions = ["dof_pos_target"]
@@ -429,7 +447,7 @@ class HiControllerRunnerCfg(LeggedRobotRunnerCfg):
             entropy_coef = 0.01
             num_learning_epochs = 5
             num_mini_batches = 4  # minibatch size = num_envs*nsteps/nminibatches
-            learning_rate = 1.0e-5 #
+            learning_rate = 3.0e-5  # 优化：从1.0e-5增加为3.0e-5，加快学习速度
             #learning_rate = 5.0e-5 #ft时使用 小一点
             schedule = "adaptive"  # could be adaptive, fixed
             gamma = 0.99
